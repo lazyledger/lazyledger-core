@@ -31,7 +31,7 @@ func NewErasuredNamespacedMerkleTree(squareSize uint64, setters ...nmt.Option) E
 	if squareSize == 0 {
 		panic("cannot create a ErasuredNamespacedMerkleTree of squareSize == 0")
 	}
-	tree := nmt.New(consts.NewBaseHashFunc, setters...)
+	tree := nmt.New(consts.NewBaseHashFunc(), setters...)
 	return ErasuredNamespacedMerkleTree{squareSize: squareSize, options: setters, tree: tree}
 }
 
@@ -71,4 +71,25 @@ func (w *ErasuredNamespacedMerkleTree) Push(data []byte, idx rsmt2d.SquareIndex)
 // underlying NamespaceMerkleTree Root.
 func (w *ErasuredNamespacedMerkleTree) Root() []byte {
 	return w.tree.Root().Bytes()
+}
+
+// ComputeErasuredRow creates a ErasuredNamespacedMerkleTree by extending the shares provided using
+// the default codec
+func ComputeErasuredRow(shares [][]byte) (*ErasuredNamespacedMerkleTree, error) {
+	tree := NewErasuredNamespacedMerkleTree(uint64(len(shares)))
+	codec := consts.DefaultCodec()
+	extendedShares, err := codec.Encode(shares)
+	if err != nil {
+		return nil, err
+	}
+	for i, share := range extendedShares {
+		tree.Push(share, rsmt2d.SquareIndex{Axis: 0, Cell: uint(i)})
+	}
+	return &tree, nil
+}
+
+// CreateInclusionProof wraps the underlying nmt tree to create and return the inclusion proof
+// of a selected leaf
+func (w *ErasuredNamespacedMerkleTree) CreateInclusionProof(indx int) (nmt.Proof, error) {
+	return w.tree.Prove(indx)
 }
