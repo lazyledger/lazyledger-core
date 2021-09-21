@@ -12,8 +12,8 @@ import (
 	"io"
 	"os"
 
-	cs "github.com/celestiaorg/celestia-core/consensus"
-	tmjson "github.com/celestiaorg/celestia-core/libs/json"
+	cs "github.com/tendermint/tendermint/internal/consensus"
+	tmjson "github.com/tendermint/tendermint/libs/json"
 )
 
 func main() {

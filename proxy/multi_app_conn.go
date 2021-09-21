@@ -5,9 +5,9 @@ import (
 	"os"
 	"syscall"
 
-	abcicli "github.com/celestiaorg/celestia-core/abci/client"
-	tmlog "github.com/celestiaorg/celestia-core/libs/log"
-	"github.com/celestiaorg/celestia-core/libs/service"
+	abcicli "github.com/tendermint/tendermint/abci/client"
+	tmlog "github.com/tendermint/tendermint/libs/log"
+	"github.com/tendermint/tendermint/libs/service"
 )
 
 const (

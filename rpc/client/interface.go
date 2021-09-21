@@ -23,13 +23,14 @@ implementation.
 import (
 	"context"
 
-	"github.com/celestiaorg/celestia-core/libs/bytes"
-	"github.com/celestiaorg/celestia-core/libs/service"
-	ctypes "github.com/celestiaorg/celestia-core/rpc/core/types"
-	"github.com/celestiaorg/celestia-core/types"
+	"github.com/tendermint/tendermint/libs/bytes"
+	"github.com/tendermint/tendermint/libs/service"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	"github.com/tendermint/tendermint/types"
 )
 
-//go:generate mockery --case underscore --name Client
+//go:generate ../../scripts/mockery_generate.sh Client
+
 // Client wraps most important rpc calls a client would make if you want to
 // listen for events, test if it also implements events.EventSwitch.
 type Client interface {
@@ -66,19 +67,36 @@ type ABCIClient interface {
 // and prove anything about the chain.
 type SignClient interface {
 	Block(ctx context.Context, height *int64) (*ctypes.ResultBlock, error)
-	BlockByHash(ctx context.Context, hash []byte) (*ctypes.ResultBlock, error)
+	BlockByHash(ctx context.Context, hash bytes.HexBytes) (*ctypes.ResultBlock, error)
 	BlockResults(ctx context.Context, height *int64) (*ctypes.ResultBlockResults, error)
 	Commit(ctx context.Context, height *int64) (*ctypes.ResultCommit, error)
-	DataAvailabilityHeader(ctx context.Context, height *int64) (*ctypes.ResultDataAvailabilityHeader, error)
 	Validators(ctx context.Context, height *int64, page, perPage *int) (*ctypes.ResultValidators, error)
-	Tx(ctx context.Context, hash []byte, prove bool) (*ctypes.ResultTx, error)
-	TxSearch(ctx context.Context, query string, prove bool, page, perPage *int,
-		orderBy string) (*ctypes.ResultTxSearch, error)
+	Tx(ctx context.Context, hash bytes.HexBytes, prove bool) (*ctypes.ResultTx, error)
+
+	// TxSearch defines a method to search for a paginated set of transactions by
+	// DeliverTx event search criteria.
+	TxSearch(
+		ctx context.Context,
+		query string,
+		prove bool,
+		page, perPage *int,
+		orderBy string,
+	) (*ctypes.ResultTxSearch, error)
+
+	// BlockSearch defines a method to search for a paginated set of blocks by
+	// BeginBlock and EndBlock event search criteria.
+	BlockSearch(
+		ctx context.Context,
+		query string,
+		page, perPage *int,
+		orderBy string,
+	) (*ctypes.ResultBlockSearch, error)
 }
 
 // HistoryClient provides access to data from genesis to now in large chunks.
 type HistoryClient interface {
 	Genesis(context.Context) (*ctypes.ResultGenesis, error)
+	GenesisChunked(context.Context, uint) (*ctypes.ResultGenesisChunk, error)
 	BlockchainInfo(ctx context.Context, minHeight, maxHeight int64) (*ctypes.ResultBlockchainInfo, error)
 }
 
@@ -122,7 +140,7 @@ type MempoolClient interface {
 }
 
 // EvidenceClient is used for submitting an evidence of the malicious
-// behaviour.
+// behavior.
 type EvidenceClient interface {
 	BroadcastEvidence(context.Context, types.Evidence) (*ctypes.ResultBroadcastEvidence, error)
 }

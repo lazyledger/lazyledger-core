@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/celestiaorg/celestia-core/types"
+	"github.com/tendermint/tendermint/types"
 )
 
 //-----------------------------------------------------
@@ -56,7 +56,7 @@ func validateBlock(state State, block *types.Block) error {
 			block.AppHash,
 		)
 	}
-	hashCP := types.HashConsensusParams(state.ConsensusParams)
+	hashCP := state.ConsensusParams.HashConsensusParams()
 	if !bytes.Equal(block.ConsensusHash, hashCP) {
 		return fmt.Errorf("wrong Block.Header.ConsensusHash.  Expected %X, got %v",
 			hashCP,

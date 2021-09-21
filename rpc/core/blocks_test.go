@@ -7,13 +7,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	abci "github.com/celestiaorg/celestia-core/abci/types"
-	"github.com/celestiaorg/celestia-core/libs/db/memdb"
-	tmstate "github.com/celestiaorg/celestia-core/proto/tendermint/state"
-	ctypes "github.com/celestiaorg/celestia-core/rpc/core/types"
-	rpctypes "github.com/celestiaorg/celestia-core/rpc/jsonrpc/types"
-	sm "github.com/celestiaorg/celestia-core/state"
-	"github.com/celestiaorg/celestia-core/types"
+	dbm "github.com/tendermint/tm-db"
+
+	abci "github.com/tendermint/tendermint/abci/types"
+	tmstate "github.com/tendermint/tendermint/proto/tendermint/state"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
+	sm "github.com/tendermint/tendermint/state"
+	"github.com/tendermint/tendermint/types"
 )
 
 func TestBlockchainInfo(t *testing.T) {
@@ -71,16 +72,16 @@ func TestBlockchainInfo(t *testing.T) {
 func TestBlockResults(t *testing.T) {
 	results := &tmstate.ABCIResponses{
 		DeliverTxs: []*abci.ResponseDeliverTx{
-			{Code: 0, Data: []byte{0x01}, Log: "ok"},
-			{Code: 0, Data: []byte{0x02}, Log: "ok"},
-			{Code: 1, Log: "not ok"},
+			{Code: 0, Data: []byte{0x01}, Log: "ok", GasUsed: 10},
+			{Code: 0, Data: []byte{0x02}, Log: "ok", GasUsed: 5},
+			{Code: 1, Log: "not ok", GasUsed: 0},
 		},
 		EndBlock:   &abci.ResponseEndBlock{},
 		BeginBlock: &abci.ResponseBeginBlock{},
 	}
 
-	env = &Environment{}
-	env.StateStore = sm.NewStore(memdb.NewDB())
+	env := &Environment{}
+	env.StateStore = sm.NewStore(dbm.NewMemDB())
 	err := env.StateStore.SaveABCIResponses(100, results)
 	require.NoError(t, err)
 	env.BlockStore = mockBlockStore{height: 100}
@@ -96,6 +97,7 @@ func TestBlockResults(t *testing.T) {
 		{100, false, &ctypes.ResultBlockResults{
 			Height:                100,
 			TxsResults:            results.DeliverTxs,
+			TotalGasUsed:          15,
 			BeginBlockEvents:      results.BeginBlock.Events,
 			EndBlockEvents:        results.EndBlock.Events,
 			ValidatorUpdates:      results.EndBlock.ValidatorUpdates,
@@ -104,7 +106,7 @@ func TestBlockResults(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		res, err := BlockResults(&rpctypes.Context{}, &tc.height)
+		res, err := env.BlockResults(&rpctypes.Context{}, &tc.height)
 		if tc.wantErr {
 			assert.Error(t, err)
 		} else {
@@ -127,7 +129,7 @@ func (mockBlockStore) LoadBlock(height int64) *types.Block               { retur
 func (mockBlockStore) LoadBlockByHash(hash []byte) *types.Block          { return nil }
 func (mockBlockStore) LoadBlockPart(height int64, index int) *types.Part { return nil }
 func (mockBlockStore) LoadBlockCommit(height int64) *types.Commit        { return nil }
-func (mockBlockStore) LoadSeenCommit(height int64) *types.Commit         { return nil }
+func (mockBlockStore) LoadSeenCommit() *types.Commit                     { return nil }
 func (mockBlockStore) PruneBlocks(height int64) (uint64, error)          { return 0, nil }
 func (mockBlockStore) SaveBlock(block *types.Block, blockParts *types.PartSet, seenCommit *types.Commit) {
 }

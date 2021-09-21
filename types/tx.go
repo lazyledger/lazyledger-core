@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/celestiaorg/celestia-core/crypto/merkle"
-	"github.com/celestiaorg/celestia-core/crypto/tmhash"
-	tmbytes "github.com/celestiaorg/celestia-core/libs/bytes"
-	"github.com/celestiaorg/celestia-core/pkg/consts"
-	tmproto "github.com/celestiaorg/celestia-core/proto/tendermint/types"
+	"github.com/tendermint/tendermint/crypto/merkle"
+	"github.com/tendermint/tendermint/crypto/tmhash"
+	tmbytes "github.com/tendermint/tendermint/libs/bytes"
+	"github.com/tendermint/tendermint/pkg/consts"
+	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 )
 
 // Tx is an arbitrary byte array.
@@ -80,16 +80,15 @@ func (txs Txs) Proof(i int) TxProof {
 	}
 }
 
-func (txs Txs) SplitIntoShares() NamespacedShares {
-	rawDatas := make([][]byte, len(txs))
-	for i, tx := range txs {
+func (txs Txs) splitIntoShares(shareSize int) NamespacedShares {
+	shares := make([]NamespacedShare, 0)
+	for _, tx := range txs {
 		rawData, err := tx.MarshalDelimited()
 		if err != nil {
 			panic(fmt.Sprintf("included Tx in mem-pool that can not be encoded %v", tx))
 		}
-		rawDatas[i] = rawData
+		shares = appendToShares(shares, consts.TxNamespaceID, rawData, shareSize)
 	}
-	shares := splitContiguous(consts.TxNamespaceID, rawDatas)
 	return shares
 }
 

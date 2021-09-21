@@ -7,12 +7,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/celestiaorg/celestia-core/abci/example/code"
-	"github.com/celestiaorg/celestia-core/abci/types"
-	cryptoenc "github.com/celestiaorg/celestia-core/crypto/encoding"
-	dbb "github.com/celestiaorg/celestia-core/libs/db/badgerdb"
-	"github.com/celestiaorg/celestia-core/libs/log"
-	pc "github.com/celestiaorg/celestia-core/proto/tendermint/crypto"
+	dbm "github.com/tendermint/tm-db"
+
+	"github.com/tendermint/tendermint/abci/example/code"
+	"github.com/tendermint/tendermint/abci/types"
+	cryptoenc "github.com/tendermint/tendermint/crypto/encoding"
+	"github.com/tendermint/tendermint/libs/log"
+	pc "github.com/tendermint/tendermint/proto/tendermint/crypto"
 )
 
 const (
@@ -36,7 +37,7 @@ type PersistentKVStoreApplication struct {
 
 func NewPersistentKVStoreApplication(dbDir string) *PersistentKVStoreApplication {
 	name := "kvstore"
-	db, err := dbb.NewDB(name, dbDir)
+	db, err := dbm.NewGoLevelDB(name, dbDir)
 	if err != nil {
 		panic(err)
 	}
@@ -48,6 +49,10 @@ func NewPersistentKVStoreApplication(dbDir string) *PersistentKVStoreApplication
 		valAddrToPubKeyMap: make(map[string]pc.PublicKey),
 		logger:             log.NewNopLogger(),
 	}
+}
+
+func (app *PersistentKVStoreApplication) Close() error {
+	return app.app.state.db.Close()
 }
 
 func (app *PersistentKVStoreApplication) SetLogger(l log.Logger) {
@@ -163,11 +168,6 @@ func (app *PersistentKVStoreApplication) OfferSnapshot(
 func (app *PersistentKVStoreApplication) ApplySnapshotChunk(
 	req types.RequestApplySnapshotChunk) types.ResponseApplySnapshotChunk {
 	return types.ResponseApplySnapshotChunk{Result: types.ResponseApplySnapshotChunk_ABORT}
-}
-
-func (app *PersistentKVStoreApplication) PreprocessTxs(
-	req types.RequestPreprocessTxs) types.ResponsePreprocessTxs {
-	return types.ResponsePreprocessTxs{Txs: req.Txs}
 }
 
 //---------------------------------------------

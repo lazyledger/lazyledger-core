@@ -1,8 +1,6 @@
 package store
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -10,23 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	dbm "github.com/tendermint/tm-db"
 
-	cfg "github.com/celestiaorg/celestia-core/config"
-	"github.com/celestiaorg/celestia-core/crypto"
-	dbm "github.com/celestiaorg/celestia-core/libs/db"
-	"github.com/celestiaorg/celestia-core/libs/db/memdb"
-	"github.com/celestiaorg/celestia-core/libs/log"
-	tmrand "github.com/celestiaorg/celestia-core/libs/rand"
-	"github.com/celestiaorg/celestia-core/pkg/da"
-	tmstore "github.com/celestiaorg/celestia-core/proto/tendermint/store"
-	tmversion "github.com/celestiaorg/celestia-core/proto/tendermint/version"
-	sm "github.com/celestiaorg/celestia-core/state"
-	"github.com/celestiaorg/celestia-core/types"
-	tmtime "github.com/celestiaorg/celestia-core/types/time"
-	"github.com/celestiaorg/celestia-core/version"
+	cfg "github.com/tendermint/tendermint/config"
+	"github.com/tendermint/tendermint/crypto"
+	"github.com/tendermint/tendermint/libs/log"
+	tmrand "github.com/tendermint/tendermint/libs/rand"
+	tmtime "github.com/tendermint/tendermint/libs/time"
+	sm "github.com/tendermint/tendermint/state"
+	"github.com/tendermint/tendermint/state/test/factory"
+	"github.com/tendermint/tendermint/types"
+	"github.com/tendermint/tendermint/version"
 )
 
 // A cleanupFunc cleans up any config / test files created for a particular
@@ -41,104 +35,22 @@ func makeTestCommit(height int64, timestamp time.Time) *types.Commit {
 		Timestamp:        timestamp,
 		Signature:        []byte("Signature"),
 	}}
-
-	var hash = make([]byte, 32)
-	hh := sha256.Sum256([]byte("Headerhash"))
-	copy(hash, hh[:])
-
 	return types.NewCommit(height, 0,
-		types.BlockID{Hash: hash, PartSetHeader: types.PartSetHeader{Hash: []byte(""), Total: 2}}, commitSigs)
-}
-
-func makeTxs(height int64) (txs []types.Tx) {
-	for i := 0; i < 10; i++ {
-		txs = append(txs, types.Tx([]byte{byte(height), byte(i)}))
-	}
-	return txs
-}
-
-func makeBlock(height int64, state sm.State, lastCommit *types.Commit) *types.Block {
-	block, _ := state.MakeBlock(height, makeTxs(height), nil,
-		nil, types.Messages{}, lastCommit, state.Validators.GetProposer().Address)
-	return block
+		types.BlockID{Hash: []byte(""), PartSetHeader: types.PartSetHeader{Hash: []byte(""), Total: 2}}, commitSigs)
 }
 
 func makeStateAndBlockStore(logger log.Logger) (sm.State, *BlockStore, cleanupFunc) {
 	config := cfg.ResetTestRoot("blockchain_reactor_test")
-	// blockDB := dbm.NewDebugDB("blockDB", memdb.NewDB())
-	// stateDB := dbm.NewDebugDB("stateDB", memdb.NewDB())
-	blockDB := memdb.NewDB()
-	stateDB := memdb.NewDB()
-	stateStore := sm.NewStore(stateDB)
-	state, err := stateStore.LoadFromDBOrGenesisFile(config.GenesisFile())
+	blockDB := dbm.NewMemDB()
+	state, err := sm.MakeGenesisStateFromFile(config.GenesisFile())
 	if err != nil {
 		panic(fmt.Errorf("error constructing state from genesis file: %w", err))
 	}
 	return state, NewBlockStore(blockDB), func() { os.RemoveAll(config.RootDir) }
 }
 
-func TestLoadBlockStoreState(t *testing.T) {
-
-	type blockStoreTest struct {
-		testName string
-		bss      *tmstore.BlockStoreState
-		want     tmstore.BlockStoreState
-	}
-
-	testCases := []blockStoreTest{
-		{"success", &tmstore.BlockStoreState{Base: 100, Height: 1000},
-			tmstore.BlockStoreState{Base: 100, Height: 1000}},
-		{"empty", &tmstore.BlockStoreState{}, tmstore.BlockStoreState{}},
-		{"no base", &tmstore.BlockStoreState{Height: 1000}, tmstore.BlockStoreState{Base: 1, Height: 1000}},
-	}
-
-	for _, tc := range testCases {
-		db := memdb.NewDB()
-		SaveBlockStoreState(tc.bss, db)
-		retrBSJ := LoadBlockStoreState(db)
-		assert.Equal(t, tc.want, retrBSJ, "expected the retrieved DBs to match: %s", tc.testName)
-	}
-}
-
-func TestNewBlockStore(t *testing.T) {
-	db := memdb.NewDB()
-	bss := tmstore.BlockStoreState{Base: 100, Height: 10000}
-	bz, _ := proto.Marshal(&bss)
-	err := db.Set(blockStoreKey, bz)
-	require.NoError(t, err)
-	bs := NewBlockStore(db)
-	require.Equal(t, int64(100), bs.Base(), "failed to properly parse blockstore")
-	require.Equal(t, int64(10000), bs.Height(), "failed to properly parse blockstore")
-
-	panicCausers := []struct {
-		data    []byte
-		wantErr string
-	}{
-		{[]byte("artful-doger"), "not unmarshal bytes"},
-		{[]byte(" "), "unmarshal bytes"},
-	}
-
-	for i, tt := range panicCausers {
-		tt := tt
-		// Expecting a panic here on trying to parse an invalid blockStore
-		_, _, panicErr := doFn(func() (interface{}, error) {
-			err := db.Set(blockStoreKey, tt.data)
-			require.NoError(t, err)
-			_ = NewBlockStore(db)
-			return nil, nil
-		})
-		require.NotNil(t, panicErr, "#%d panicCauser: %q expected a panic", i, tt.data)
-		assert.Contains(t, fmt.Sprintf("%#v", panicErr), tt.wantErr, "#%d data: %q", i, tt.data)
-	}
-
-	err = db.Set(blockStoreKey, []byte{})
-	require.NoError(t, err)
-	bs = NewBlockStore(db)
-	assert.Equal(t, bs.Height(), int64(0), "expecting empty bytes to be unmarshaled alright")
-}
-
 func freshBlockStore() (*BlockStore, dbm.DB) {
-	db := memdb.NewDB()
+	db := dbm.NewMemDB()
 	return NewBlockStore(db), db
 }
 
@@ -153,8 +65,8 @@ var (
 
 func TestMain(m *testing.M) {
 	var cleanup cleanupFunc
-	state, _, cleanup = makeStateAndBlockStore(log.NewTMLogger(new(bytes.Buffer)))
-	block = makeBlock(1, state, new(types.Commit))
+	state, _, cleanup = makeStateAndBlockStore(log.NewNopLogger())
+	block = factory.MakeBlock(state, 1, new(types.Commit))
 	partSet = block.MakePartSet(2)
 	part1 = partSet.GetPart(0)
 	part2 = partSet.GetPart(1)
@@ -165,9 +77,8 @@ func TestMain(m *testing.M) {
 }
 
 // TODO: This test should be simplified ...
-
 func TestBlockStoreSaveLoadBlock(t *testing.T) {
-	state, bs, cleanup := makeStateAndBlockStore(log.NewTMLogger(new(bytes.Buffer)))
+	state, bs, cleanup := makeStateAndBlockStore(log.NewNopLogger())
 	defer cleanup()
 	require.Equal(t, bs.Base(), int64(0), "initially the base should be zero")
 	require.Equal(t, bs.Height(), int64(0), "initially the height should be zero")
@@ -181,7 +92,7 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 	}
 
 	// save a block
-	block := makeBlock(bs.Height()+1, state, new(types.Commit))
+	block := factory.MakeBlock(state, bs.Height()+1, new(types.Commit))
 	validPartSet := block.MakePartSet(2)
 	seenCommit := makeTestCommit(10, tmtime.Now())
 	bs.SaveBlock(block, partSet, seenCommit)
@@ -194,7 +105,7 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 	require.Error(t, err)
 
 	header1 := types.Header{
-		Version:         tmversion.Consensus{Block: version.BlockProtocol},
+		Version:         version.Consensus{Block: version.BlockProtocol},
 		Height:          1,
 		ChainID:         "block_test",
 		Time:            tmtime.Now(),
@@ -202,7 +113,6 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 	}
 
 	// End of setup, test data
-
 	commitAtH10 := makeTestCommit(10, tmtime.Now())
 	tuples := []struct {
 		block      *types.Block
@@ -231,7 +141,7 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 		{
 			block: newBlock( // New block at height 5 in empty block store is fine
 				types.Header{
-					Version:         tmversion.Consensus{Block: version.BlockProtocol},
+					Version:         version.Consensus{Block: version.BlockProtocol},
 					Height:          5,
 					ChainID:         "block_test",
 					Time:            tmtime.Now(),
@@ -311,29 +221,29 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 			}
 
 			if tuple.corruptBlockInDB {
-				err := db.Set(calcBlockMetaKey(tuple.block.Height), []byte("block-bogus"))
+				err := db.Set(blockMetaKey(tuple.block.Height), []byte("block-bogus"))
 				require.NoError(t, err)
 			}
 			bBlock := bs.LoadBlock(tuple.block.Height)
 			bBlockMeta := bs.LoadBlockMeta(tuple.block.Height)
 
 			if tuple.eraseSeenCommitInDB {
-				err := db.Delete(calcSeenCommitKey(tuple.block.Height))
+				err := db.Delete(seenCommitKey())
 				require.NoError(t, err)
 			}
 			if tuple.corruptSeenCommitInDB {
-				err := db.Set(calcSeenCommitKey(tuple.block.Height), []byte("bogus-seen-commit"))
+				err := db.Set(seenCommitKey(), []byte("bogus-seen-commit"))
 				require.NoError(t, err)
 			}
-			bSeenCommit := bs.LoadSeenCommit(tuple.block.Height)
+			bSeenCommit := bs.LoadSeenCommit()
 
 			commitHeight := tuple.block.Height - 1
 			if tuple.eraseCommitInDB {
-				err := db.Delete(calcBlockCommitKey(commitHeight))
+				err := db.Delete(blockCommitKey(commitHeight))
 				require.NoError(t, err)
 			}
 			if tuple.corruptCommitInDB {
-				err := db.Set(calcBlockCommitKey(commitHeight), []byte("foo-bogus"))
+				err := db.Set(blockCommitKey(commitHeight), []byte("foo-bogus"))
 				require.NoError(t, err)
 			}
 			bCommit := bs.LoadBlockCommit(commitHeight)
@@ -378,20 +288,20 @@ func TestBlockStoreSaveLoadBlock(t *testing.T) {
 func TestLoadBaseMeta(t *testing.T) {
 	config := cfg.ResetTestRoot("blockchain_reactor_test")
 	defer os.RemoveAll(config.RootDir)
-	stateStore := sm.NewStore(memdb.NewDB())
-	state, err := stateStore.LoadFromDBOrGenesisFile(config.GenesisFile())
+	state, err := sm.MakeGenesisStateFromFile(config.GenesisFile())
 	require.NoError(t, err)
-	bs := NewBlockStore(memdb.NewDB())
+	bs := NewBlockStore(dbm.NewMemDB())
 
 	for h := int64(1); h <= 10; h++ {
-		block := makeBlock(h, state, new(types.Commit))
+		block := factory.MakeBlock(state, h, new(types.Commit))
 		partSet := block.MakePartSet(2)
 		seenCommit := makeTestCommit(h, tmtime.Now())
 		bs.SaveBlock(block, partSet, seenCommit)
 	}
 
-	_, err = bs.PruneBlocks(4)
+	pruned, err := bs.PruneBlocks(4)
 	require.NoError(t, err)
+	assert.EqualValues(t, 3, pruned)
 
 	baseBlock := bs.LoadBaseMeta()
 	assert.EqualValues(t, 4, baseBlock.Header.Height)
@@ -413,7 +323,7 @@ func TestLoadBlockPart(t *testing.T) {
 	require.Nil(t, res, "a non-existent block part should return nil")
 
 	// 2. Next save a corrupted block then try to load it
-	err := db.Set(calcBlockPartKey(height, index), []byte("Tendermint"))
+	err := db.Set(blockPartKey(height, index), []byte("Tendermint"))
 	require.NoError(t, err)
 	res, _, panicErr = doFn(loadPart)
 	require.NotNil(t, panicErr, "expecting a non-nil panic")
@@ -422,7 +332,7 @@ func TestLoadBlockPart(t *testing.T) {
 	// 3. A good block serialized and saved to the DB should be retrievable
 	pb1, err := part1.ToProto()
 	require.NoError(t, err)
-	err = db.Set(calcBlockPartKey(height, index), mustEncode(pb1))
+	err = db.Set(blockPartKey(height, index), mustEncode(pb1))
 	require.NoError(t, err)
 	gotPart, _, panicErr := doFn(loadPart)
 	require.Nil(t, panicErr, "an existent and proper block should not panic")
@@ -434,25 +344,20 @@ func TestLoadBlockPart(t *testing.T) {
 func TestPruneBlocks(t *testing.T) {
 	config := cfg.ResetTestRoot("blockchain_reactor_test")
 	defer os.RemoveAll(config.RootDir)
-	stateStore := sm.NewStore(memdb.NewDB())
-	state, err := stateStore.LoadFromDBOrGenesisFile(config.GenesisFile())
+	state, err := sm.MakeGenesisStateFromFile(config.GenesisFile())
 	require.NoError(t, err)
-	db := memdb.NewDB()
+	db := dbm.NewMemDB()
 	bs := NewBlockStore(db)
 	assert.EqualValues(t, 0, bs.Base())
 	assert.EqualValues(t, 0, bs.Height())
 	assert.EqualValues(t, 0, bs.Size())
-
-	// pruning an empty store should error, even when pruning to 0
-	_, err = bs.PruneBlocks(1)
-	require.Error(t, err)
 
 	_, err = bs.PruneBlocks(0)
 	require.Error(t, err)
 
 	// make more than 1000 blocks, to test batch deletions
 	for h := int64(1); h <= 1500; h++ {
-		block := makeBlock(h, state, new(types.Commit))
+		block := factory.MakeBlock(state, h, new(types.Commit))
 		partSet := block.MakePartSet(2)
 		seenCommit := makeTestCommit(h, tmtime.Now())
 		bs.SaveBlock(block, partSet, seenCommit)
@@ -471,10 +376,6 @@ func TestPruneBlocks(t *testing.T) {
 	assert.EqualValues(t, 1200, bs.Base())
 	assert.EqualValues(t, 1500, bs.Height())
 	assert.EqualValues(t, 301, bs.Size())
-	assert.EqualValues(t, tmstore.BlockStoreState{
-		Base:   1200,
-		Height: 1500,
-	}, LoadBlockStoreState(db))
 
 	require.NotNil(t, bs.LoadBlock(1200))
 	require.Nil(t, bs.LoadBlock(1199))
@@ -490,9 +391,9 @@ func TestPruneBlocks(t *testing.T) {
 		require.NotNil(t, bs.LoadBlock(i))
 	}
 
-	// Pruning below the current base should error
+	// Pruning below the current base should not error
 	_, err = bs.PruneBlocks(1199)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	// Pruning to the current base should work
 	pruned, err = bs.PruneBlocks(1200)
@@ -533,40 +434,35 @@ func TestLoadBlockMeta(t *testing.T) {
 	require.Nil(t, res, "a non-existent blockMeta should return nil")
 
 	// 2. Next save a corrupted blockMeta then try to load it
-	err := db.Set(calcBlockMetaKey(height), []byte("Tendermint-Meta"))
+	err := db.Set(blockMetaKey(height), []byte("Tendermint-Meta"))
 	require.NoError(t, err)
 	res, _, panicErr = doFn(loadMeta)
 	require.NotNil(t, panicErr, "expecting a non-nil panic")
 	require.Contains(t, panicErr.Error(), "unmarshal to tmproto.BlockMeta")
 
-	dah := da.MinDataAvailabilityHeader()
 	// 3. A good blockMeta serialized and saved to the DB should be retrievable
 	meta := &types.BlockMeta{Header: types.Header{
-		Version: tmversion.Consensus{
-			Block: version.BlockProtocol, App: 0}, Height: 1, ProposerAddress: tmrand.Bytes(crypto.AddressSize)},
-		DAHeader: dah}
-	pbm, err := meta.ToProto()
-	require.NoError(t, err)
-	err = db.Set(calcBlockMetaKey(height), mustEncode(pbm))
+		Version: version.Consensus{
+			Block: version.BlockProtocol, App: 0}, Height: 1, ProposerAddress: tmrand.Bytes(crypto.AddressSize)}}
+	pbm := meta.ToProto()
+	err = db.Set(blockMetaKey(height), mustEncode(pbm))
 	require.NoError(t, err)
 	gotMeta, _, panicErr := doFn(loadMeta)
 	require.Nil(t, panicErr, "an existent and proper block should not panic")
 	require.Nil(t, res, "a properly saved blockMeta should return a proper blocMeta ")
-	pbmeta, err := meta.ToProto()
-	require.NoError(t, err)
+	pbmeta := meta.ToProto()
 	if gmeta, ok := gotMeta.(*types.BlockMeta); ok {
-		pbgotMeta, err := gmeta.ToProto()
-		require.NoError(t, err)
+		pbgotMeta := gmeta.ToProto()
 		require.Equal(t, mustEncode(pbmeta), mustEncode(pbgotMeta),
 			"expecting successful retrieval of previously saved blockMeta")
 	}
 }
 
 func TestBlockFetchAtHeight(t *testing.T) {
-	state, bs, cleanup := makeStateAndBlockStore(log.NewTMLogger(new(bytes.Buffer)))
+	state, bs, cleanup := makeStateAndBlockStore(log.NewNopLogger())
 	defer cleanup()
 	require.Equal(t, bs.Height(), int64(0), "initially the height should be zero")
-	block := makeBlock(bs.Height()+1, state, new(types.Commit))
+	block := factory.MakeBlock(state, bs.Height()+1, new(types.Commit))
 
 	partSet := block.MakePartSet(2)
 	seenCommit := makeTestCommit(10, tmtime.Now())
@@ -588,6 +484,39 @@ func TestBlockFetchAtHeight(t *testing.T) {
 	require.Nil(t, blockAtHeightPlus1, "expecting an unsuccessful load of Height()+1")
 	blockAtHeightPlus2 := bs.LoadBlock(bs.Height() + 2)
 	require.Nil(t, blockAtHeightPlus2, "expecting an unsuccessful load of Height()+2")
+}
+
+func TestSeenAndCanonicalCommit(t *testing.T) {
+	bs, _ := freshBlockStore()
+	loadCommit := func() (interface{}, error) {
+		meta := bs.LoadSeenCommit()
+		return meta, nil
+	}
+
+	// Initially no contents.
+	// 1. Requesting for a non-existent blockMeta shouldn't fail
+	res, _, panicErr := doFn(loadCommit)
+	require.Nil(t, panicErr, "a non-existent blockMeta shouldn't cause a panic")
+	require.Nil(t, res, "a non-existent blockMeta should return nil")
+
+	// produce a few blocks and check that the correct seen and cannoncial commits
+	// are persisted.
+	for h := int64(3); h <= 5; h++ {
+		blockCommit := makeTestCommit(h-1, tmtime.Now())
+		block := factory.MakeBlock(state, h, blockCommit)
+		partSet := block.MakePartSet(2)
+		seenCommit := makeTestCommit(h, tmtime.Now())
+		bs.SaveBlock(block, partSet, seenCommit)
+		c3 := bs.LoadSeenCommit()
+		require.NotNil(t, c3)
+		require.Equal(t, h, c3.Height)
+		require.Equal(t, seenCommit.Hash(), c3.Hash())
+		c5 := bs.LoadBlockCommit(h)
+		require.Nil(t, c5)
+		c6 := bs.LoadBlockCommit(h - 1)
+		require.Equal(t, blockCommit.Hash(), c6.Hash())
+	}
+
 }
 
 func doFn(fn func() (interface{}, error)) (res interface{}, err error, panicErr error) {

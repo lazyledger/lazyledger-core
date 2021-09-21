@@ -7,9 +7,9 @@ import (
 	"fmt"
 	mrand "math/rand"
 
-	abcicli "github.com/celestiaorg/celestia-core/abci/client"
-	"github.com/celestiaorg/celestia-core/abci/types"
-	tmrand "github.com/celestiaorg/celestia-core/libs/rand"
+	abcicli "github.com/tendermint/tendermint/abci/client"
+	"github.com/tendermint/tendermint/abci/types"
+	tmrand "github.com/tendermint/tendermint/libs/rand"
 )
 
 var ctx = context.Background()

@@ -3,11 +3,12 @@ package encoding
 import (
 	"fmt"
 
-	"github.com/celestiaorg/celestia-core/crypto"
-	"github.com/celestiaorg/celestia-core/crypto/ed25519"
-	"github.com/celestiaorg/celestia-core/crypto/secp256k1"
-	"github.com/celestiaorg/celestia-core/libs/json"
-	pc "github.com/celestiaorg/celestia-core/proto/tendermint/crypto"
+	"github.com/tendermint/tendermint/crypto"
+	"github.com/tendermint/tendermint/crypto/ed25519"
+	"github.com/tendermint/tendermint/crypto/secp256k1"
+	"github.com/tendermint/tendermint/crypto/sr25519"
+	"github.com/tendermint/tendermint/libs/json"
+	pc "github.com/tendermint/tendermint/proto/tendermint/crypto"
 )
 
 func init() {
@@ -32,6 +33,12 @@ func PubKeyToProto(k crypto.PubKey) (pc.PublicKey, error) {
 				Secp256K1: k,
 			},
 		}
+	case sr25519.PubKey:
+		kp = pc.PublicKey{
+			Sum: &pc.PublicKey_Sr25519{
+				Sr25519: k,
+			},
+		}
 	default:
 		return kp, fmt.Errorf("toproto: key type %v is not supported", k)
 	}
@@ -51,11 +58,19 @@ func PubKeyFromProto(k pc.PublicKey) (crypto.PubKey, error) {
 		return pk, nil
 	case *pc.PublicKey_Secp256K1:
 		if len(k.Secp256K1) != secp256k1.PubKeySize {
-			return nil, fmt.Errorf("invalid size for PubKeyEd25519. Got %d, expected %d",
+			return nil, fmt.Errorf("invalid size for PubKeySecp256k1. Got %d, expected %d",
 				len(k.Secp256K1), secp256k1.PubKeySize)
 		}
 		pk := make(secp256k1.PubKey, secp256k1.PubKeySize)
 		copy(pk, k.Secp256K1)
+		return pk, nil
+	case *pc.PublicKey_Sr25519:
+		if len(k.Sr25519) != sr25519.PubKeySize {
+			return nil, fmt.Errorf("invalid size for PubKeySr25519. Got %d, expected %d",
+				len(k.Sr25519), sr25519.PubKeySize)
+		}
+		pk := make(sr25519.PubKey, sr25519.PubKeySize)
+		copy(pk, k.Sr25519)
 		return pk, nil
 	default:
 		return nil, fmt.Errorf("fromproto: key type %v is not supported", k)

@@ -3,12 +3,12 @@ package mock
 import (
 	"context"
 
-	abci "github.com/celestiaorg/celestia-core/abci/types"
-	"github.com/celestiaorg/celestia-core/libs/bytes"
-	"github.com/celestiaorg/celestia-core/proxy"
-	"github.com/celestiaorg/celestia-core/rpc/client"
-	ctypes "github.com/celestiaorg/celestia-core/rpc/core/types"
-	"github.com/celestiaorg/celestia-core/types"
+	abci "github.com/tendermint/tendermint/abci/types"
+	"github.com/tendermint/tendermint/libs/bytes"
+	"github.com/tendermint/tendermint/proxy"
+	"github.com/tendermint/tendermint/rpc/client"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	"github.com/tendermint/tendermint/types"
 )
 
 // ABCIApp will send all abci related request to the named app,

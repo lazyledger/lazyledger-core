@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/celestiaorg/celestia-core/abci/example/kvstore"
-	abci "github.com/celestiaorg/celestia-core/abci/types"
-	"github.com/celestiaorg/celestia-core/libs/bytes"
-	"github.com/celestiaorg/celestia-core/rpc/client"
-	"github.com/celestiaorg/celestia-core/rpc/client/mock"
-	ctypes "github.com/celestiaorg/celestia-core/rpc/core/types"
-	"github.com/celestiaorg/celestia-core/types"
+	"github.com/tendermint/tendermint/abci/example/kvstore"
+	abci "github.com/tendermint/tendermint/abci/types"
+	"github.com/tendermint/tendermint/libs/bytes"
+	"github.com/tendermint/tendermint/rpc/client"
+	"github.com/tendermint/tendermint/rpc/client/mock"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	"github.com/tendermint/tendermint/types"
 )
 
 func TestABCIMock(t *testing.T) {

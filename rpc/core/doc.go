@@ -2,7 +2,7 @@
 Package core defines the Tendermint RPC endpoints.
 
 Tendermint ships with its own JSONRPC library -
-https://github.com/celestiaorg/celestia-core/tree/master/rpc/jsonrpc.
+https://github.com/tendermint/tendermint/tree/master/rpc/jsonrpc.
 
 ## Get the list
 

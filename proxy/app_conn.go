@@ -3,11 +3,11 @@ package proxy
 import (
 	"context"
 
-	abcicli "github.com/celestiaorg/celestia-core/abci/client"
-	"github.com/celestiaorg/celestia-core/abci/types"
+	abcicli "github.com/tendermint/tendermint/abci/client"
+	"github.com/tendermint/tendermint/abci/types"
 )
 
-//go:generate mockery --case underscore --name AppConnConsensus|AppConnMempool|AppConnQuery|AppConnSnapshot
+//go:generate ../scripts/mockery_generate.sh AppConnConsensus|AppConnMempool|AppConnQuery|AppConnSnapshot
 
 //----------------------------------------------------------------------------------------
 // Enforce which abci msgs can be sent on a connection at the type level
@@ -18,7 +18,6 @@ type AppConnConsensus interface {
 
 	InitChainSync(context.Context, types.RequestInitChain) (*types.ResponseInitChain, error)
 
-	PreprocessTxsSync(context.Context, types.RequestPreprocessTxs) (*types.ResponsePreprocessTxs, error)
 	BeginBlockSync(context.Context, types.RequestBeginBlock) (*types.ResponseBeginBlock, error)
 	DeliverTxAsync(context.Context, types.RequestDeliverTx) (*abcicli.ReqRes, error)
 	EndBlockSync(context.Context, types.RequestEndBlock) (*types.ResponseEndBlock, error)
@@ -101,13 +100,6 @@ func (app *appConnConsensus) EndBlockSync(
 
 func (app *appConnConsensus) CommitSync(ctx context.Context) (*types.ResponseCommit, error) {
 	return app.appConn.CommitSync(ctx)
-}
-
-func (app *appConnConsensus) PreprocessTxsSync(
-	ctx context.Context,
-	req types.RequestPreprocessTxs,
-) (*types.ResponsePreprocessTxs, error) {
-	return app.appConn.PreprocessTxsSync(ctx, req)
 }
 
 //------------------------------------------------

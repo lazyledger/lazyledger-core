@@ -6,18 +6,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	e2e "github.com/celestiaorg/celestia-core/test/e2e/pkg"
-	"github.com/celestiaorg/celestia-core/types"
+	e2e "github.com/tendermint/tendermint/test/e2e/pkg"
+	"github.com/tendermint/tendermint/types"
 )
 
 // Tests that validator sets are available and correct according to
 // scheduled validator updates.
 func TestValidator_Sets(t *testing.T) {
 	testNode(t, func(t *testing.T, node e2e.Node) {
-		if node.Mode == e2e.ModeSeed {
-			return
-		}
-
 		client, err := node.Client()
 		require.NoError(t, err)
 		status, err := client.Status(ctx)

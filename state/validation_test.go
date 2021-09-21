@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,16 +9,20 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	abci "github.com/celestiaorg/celestia-core/abci/types"
-	"github.com/celestiaorg/celestia-core/crypto/ed25519"
-	"github.com/celestiaorg/celestia-core/crypto/tmhash"
-	"github.com/celestiaorg/celestia-core/libs/log"
-	memmock "github.com/celestiaorg/celestia-core/mempool/mock"
-	tmproto "github.com/celestiaorg/celestia-core/proto/tendermint/types"
-	sm "github.com/celestiaorg/celestia-core/state"
-	"github.com/celestiaorg/celestia-core/state/mocks"
-	"github.com/celestiaorg/celestia-core/types"
-	tmtime "github.com/celestiaorg/celestia-core/types/time"
+	abci "github.com/tendermint/tendermint/abci/types"
+	"github.com/tendermint/tendermint/crypto/ed25519"
+	"github.com/tendermint/tendermint/crypto/tmhash"
+	memmock "github.com/tendermint/tendermint/internal/mempool/mock"
+	"github.com/tendermint/tendermint/internal/test/factory"
+	"github.com/tendermint/tendermint/libs/log"
+	tmtime "github.com/tendermint/tendermint/libs/time"
+	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
+	sm "github.com/tendermint/tendermint/state"
+	"github.com/tendermint/tendermint/state/mocks"
+	sf "github.com/tendermint/tendermint/state/test/factory"
+	"github.com/tendermint/tendermint/store"
+	"github.com/tendermint/tendermint/types"
+	dbm "github.com/tendermint/tm-db"
 )
 
 const validationTestsStopHeight int64 = 10
@@ -29,12 +34,14 @@ func TestValidateBlockHeader(t *testing.T) {
 
 	state, stateDB, privVals := makeState(3, 1)
 	stateStore := sm.NewStore(stateDB)
+	blockStore := store.NewBlockStore(dbm.NewMemDB())
 	blockExec := sm.NewBlockExecutor(
 		stateStore,
 		log.TestingLogger(),
 		proxyApp.Consensus(),
 		memmock.Mempool{},
 		sm.EmptyEvidencePool{},
+		blockStore,
 	)
 	lastCommit := types.NewCommit(0, 0, types.BlockID{}, nil)
 
@@ -79,12 +86,11 @@ func TestValidateBlockHeader(t *testing.T) {
 
 	// Build up state for multiple heights
 	for height := int64(1); height < validationTestsStopHeight; height++ {
-		proposerAddr := state.Validators.GetProposer().Address
 		/*
 			Invalid blocks don't pass
 		*/
 		for _, tc := range testCases {
-			block, _ := state.MakeBlock(height, makeTxs(height), nil, nil, types.Messages{}, lastCommit, proposerAddr)
+			block := sf.MakeBlock(state, height, lastCommit)
 			tc.malleateBlock(block)
 			err := blockExec.ValidateBlock(state, block)
 			t.Logf("%s: %v", tc.name, err)
@@ -95,15 +101,15 @@ func TestValidateBlockHeader(t *testing.T) {
 			A good block passes
 		*/
 		var err error
-		state, _, lastCommit, err = makeAndCommitGoodBlock(state, height,
-			lastCommit, proposerAddr, blockExec, privVals, nil)
+		state, _, lastCommit, err = makeAndCommitGoodBlock(
+			state, height, lastCommit, state.Validators.GetProposer().Address, blockExec, privVals, nil)
 		require.NoError(t, err, "height %d", height)
 	}
 
 	nextHeight := validationTestsStopHeight
 	block, _ := state.MakeBlock(
 		nextHeight,
-		makeTxs(nextHeight), nil, nil, types.Messages{},
+		factory.MakeTenTxs(nextHeight), nil, nil, nil,
 		lastCommit,
 		state.Validators.GetProposer().Address,
 	)
@@ -120,12 +126,14 @@ func TestValidateBlockCommit(t *testing.T) {
 
 	state, stateDB, privVals := makeState(1, 1)
 	stateStore := sm.NewStore(stateDB)
+	blockStore := store.NewBlockStore(dbm.NewMemDB())
 	blockExec := sm.NewBlockExecutor(
 		stateStore,
 		log.TestingLogger(),
 		proxyApp.Consensus(),
 		memmock.Mempool{},
 		sm.EmptyEvidencePool{},
+		blockStore,
 	)
 	lastCommit := types.NewCommit(0, 0, types.BlockID{}, nil)
 	wrongSigsCommit := types.NewCommit(1, 0, types.BlockID{}, nil)
@@ -138,12 +146,14 @@ func TestValidateBlockCommit(t *testing.T) {
 				#2589: ensure state.LastValidators.VerifyCommit fails here
 			*/
 			// should be height-1 instead of height
-			wrongHeightVote, err := types.MakeVote(
-				height,
-				state.LastBlockID,
-				state.Validators,
+			wrongHeightVote, err := factory.MakeVote(
 				privVals[proposerAddr.String()],
 				chainID,
+				1,
+				height,
+				0,
+				2,
+				state.LastBlockID,
 				time.Now(),
 			)
 			require.NoError(t, err, "height %d", height)
@@ -153,7 +163,7 @@ func TestValidateBlockCommit(t *testing.T) {
 				state.LastBlockID,
 				[]types.CommitSig{wrongHeightVote.CommitSig()},
 			)
-			block, _ := state.MakeBlock(height, makeTxs(height), nil, nil, types.Messages{}, wrongHeightCommit, proposerAddr)
+			block, _ := state.MakeBlock(height, factory.MakeTenTxs(height), nil, nil, nil, wrongHeightCommit, proposerAddr)
 			err = blockExec.ValidateBlock(state, block)
 			_, isErrInvalidCommitHeight := err.(types.ErrInvalidCommitHeight)
 			require.True(t, isErrInvalidCommitHeight, "expected ErrInvalidCommitHeight at height %d but got: %v", height, err)
@@ -161,7 +171,7 @@ func TestValidateBlockCommit(t *testing.T) {
 			/*
 				#2589: test len(block.LastCommit.Signatures) == state.LastValidators.Size()
 			*/
-			block, _ = state.MakeBlock(height, makeTxs(height), nil, nil, types.Messages{}, wrongSigsCommit, proposerAddr)
+			block, _ = state.MakeBlock(height, factory.MakeTenTxs(height), nil, nil, nil, wrongSigsCommit, proposerAddr)
 			err = blockExec.ValidateBlock(state, block)
 			_, isErrInvalidCommitSignatures := err.(types.ErrInvalidCommitSignatures)
 			require.True(t, isErrInvalidCommitSignatures,
@@ -174,10 +184,8 @@ func TestValidateBlockCommit(t *testing.T) {
 		/*
 			A good block passes
 		*/
-		var (
-			err     error
-			blockID types.BlockID
-		)
+		var err error
+		var blockID types.BlockID
 		state, blockID, lastCommit, err = makeAndCommitGoodBlock(
 			state,
 			height,
@@ -192,16 +200,19 @@ func TestValidateBlockCommit(t *testing.T) {
 		/*
 			wrongSigsCommit is fine except for the extra bad precommit
 		*/
-		goodVote, err := types.MakeVote(height,
-			blockID,
-			state.Validators,
+		goodVote, err := factory.MakeVote(
 			privVals[proposerAddr.String()],
 			chainID,
+			1,
+			height,
+			0,
+			2,
+			blockID,
 			time.Now(),
 		)
 		require.NoError(t, err, "height %d", height)
 
-		bpvPubKey, err := badPrivVal.GetPubKey()
+		bpvPubKey, err := badPrivVal.GetPubKey(context.Background())
 		require.NoError(t, err)
 
 		badVote := &types.Vote{
@@ -217,9 +228,9 @@ func TestValidateBlockCommit(t *testing.T) {
 		g := goodVote.ToProto()
 		b := badVote.ToProto()
 
-		err = badPrivVal.SignVote(chainID, g)
+		err = badPrivVal.SignVote(context.Background(), chainID, g)
 		require.NoError(t, err, "height %d", height)
-		err = badPrivVal.SignVote(chainID, b)
+		err = badPrivVal.SignVote(context.Background(), chainID, b)
 		require.NoError(t, err, "height %d", height)
 
 		goodVote.Signature, badVote.Signature = g.Signature, b.Signature
@@ -236,6 +247,7 @@ func TestValidateBlockEvidence(t *testing.T) {
 
 	state, stateDB, privVals := makeState(4, 1)
 	stateStore := sm.NewStore(stateDB)
+	blockStore := store.NewBlockStore(dbm.NewMemDB())
 	defaultEvidenceTime := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	evpool := &mocks.EvidencePool{}
@@ -251,6 +263,7 @@ func TestValidateBlockEvidence(t *testing.T) {
 		proxyApp.Consensus(),
 		memmock.Mempool{},
 		evpool,
+		blockStore,
 	)
 	lastCommit := types.NewCommit(0, 0, types.BlockID{}, nil)
 
@@ -270,7 +283,7 @@ func TestValidateBlockEvidence(t *testing.T) {
 				evidence = append(evidence, newEv)
 				currentBytes += int64(len(newEv.Bytes()))
 			}
-			block, _ := state.MakeBlock(height, makeTxs(height), evidence, nil, types.Messages{}, lastCommit, proposerAddr)
+			block, _ := state.MakeBlock(height, factory.MakeTenTxs(height), evidence, nil, nil, lastCommit, proposerAddr)
 			err := blockExec.ValidateBlock(state, block)
 			if assert.Error(t, err) {
 				_, ok := err.(*types.ErrEvidenceOverflow)
@@ -295,7 +308,6 @@ func TestValidateBlockEvidence(t *testing.T) {
 		}
 
 		var err error
-
 		state, _, lastCommit, err = makeAndCommitGoodBlock(
 			state,
 			height,

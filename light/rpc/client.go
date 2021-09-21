@@ -5,43 +5,46 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
 
-	abci "github.com/celestiaorg/celestia-core/abci/types"
-	"github.com/celestiaorg/celestia-core/crypto/merkle"
-	tmbytes "github.com/celestiaorg/celestia-core/libs/bytes"
-	tmmath "github.com/celestiaorg/celestia-core/libs/math"
-	service "github.com/celestiaorg/celestia-core/libs/service"
-	rpcclient "github.com/celestiaorg/celestia-core/rpc/client"
-	ctypes "github.com/celestiaorg/celestia-core/rpc/core/types"
-	rpctypes "github.com/celestiaorg/celestia-core/rpc/jsonrpc/types"
-	"github.com/celestiaorg/celestia-core/types"
+	abci "github.com/tendermint/tendermint/abci/types"
+	"github.com/tendermint/tendermint/crypto/merkle"
+	tmbytes "github.com/tendermint/tendermint/libs/bytes"
+	tmmath "github.com/tendermint/tendermint/libs/math"
+	service "github.com/tendermint/tendermint/libs/service"
+	rpcclient "github.com/tendermint/tendermint/rpc/client"
+	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	rpctypes "github.com/tendermint/tendermint/rpc/jsonrpc/types"
+	"github.com/tendermint/tendermint/types"
 )
-
-var errNegOrZeroHeight = errors.New("negative or zero height")
 
 // KeyPathFunc builds a merkle path out of the given path and key.
 type KeyPathFunc func(path string, key []byte) (merkle.KeyPath, error)
 
-//go:generate mockery --case Underscore --Name LightClient
 // LightClient is an interface that contains functionality needed by Client from the light client.
+//go:generate ../../scripts/mockery_generate.sh LightClient
 type LightClient interface {
 	ChainID() string
+	Update(ctx context.Context, now time.Time) (*types.LightBlock, error)
 	VerifyLightBlockAtHeight(ctx context.Context, height int64, now time.Time) (*types.LightBlock, error)
 	TrustedLightBlock(height int64) (*types.LightBlock, error)
 }
 
+var _ rpcclient.Client = (*Client)(nil)
+
 // Client is an RPC client, which uses light#Client to verify data (if it can
-// be proved!). merkle.DefaultProofRuntime is used to verify values returned by
-// ABCIQuery.
+// be proved). Note, merkle.DefaultProofRuntime is used to verify values
+// returned by ABCI#Query.
 type Client struct {
 	service.BaseService
 
 	next rpcclient.Client
 	lc   LightClient
-	// Proof runtime used to verify values returned by ABCIQuery
+
+	// proof runtime used to verify values returned by ABCIQuery
 	prt       *merkle.ProofRuntime
 	keyPathFn KeyPathFunc
 }
@@ -57,6 +60,27 @@ type Option func(*Client)
 func KeyPathFn(fn KeyPathFunc) Option {
 	return func(c *Client) {
 		c.keyPathFn = fn
+	}
+}
+
+// DefaultMerkleKeyPathFn creates a function used to generate merkle key paths
+// from a path string and a key. This is the default used by the cosmos SDK.
+// This merkle key paths are required when verifying /abci_query calls
+func DefaultMerkleKeyPathFn() KeyPathFunc {
+	// regexp for extracting store name from /abci_query path
+	storeNameRegexp := regexp.MustCompile(`\/store\/(.+)\/key`)
+
+	return func(path string, key []byte) (merkle.KeyPath, error) {
+		matches := storeNameRegexp.FindStringSubmatch(path)
+		if len(matches) != 2 {
+			return nil, fmt.Errorf("can't find store name in %s using %s", path, storeNameRegexp)
+		}
+		storeName := matches[1]
+
+		kp := merkle.KeyPath{}
+		kp = kp.AppendKey([]byte(storeName), merkle.KeyEncodingURL)
+		kp = kp.AppendKey(key, merkle.KeyEncodingURL)
+		return kp, nil
 	}
 }
 
@@ -126,12 +150,13 @@ func (c *Client) ABCIQueryWithOptions(ctx context.Context, path string, data tmb
 		return nil, errors.New("no proof ops")
 	}
 	if resp.Height <= 0 {
-		return nil, errNegOrZeroHeight
+		return nil, ctypes.ErrZeroOrNegativeHeight
 	}
 
 	// Update the light client if we're behind.
 	// NOTE: AppHash for height H is in header H+1.
-	l, err := c.updateLightClientIfNeededTo(ctx, resp.Height+1)
+	nextHeight := resp.Height + 1
+	l, err := c.updateLightClientIfNeededTo(ctx, &nextHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -206,21 +231,21 @@ func (c *Client) ConsensusParams(ctx context.Context, height *int64) (*ctypes.Re
 	}
 
 	// Validate res.
-	if err := types.ValidateConsensusParams(res.ConsensusParams); err != nil {
+	if err := res.ConsensusParams.ValidateConsensusParams(); err != nil {
 		return nil, err
 	}
 	if res.BlockHeight <= 0 {
-		return nil, errNegOrZeroHeight
+		return nil, ctypes.ErrZeroOrNegativeHeight
 	}
 
 	// Update the light client if we're behind.
-	l, err := c.updateLightClientIfNeededTo(ctx, res.BlockHeight)
+	l, err := c.updateLightClientIfNeededTo(ctx, &res.BlockHeight)
 	if err != nil {
 		return nil, err
 	}
 
 	// Verify hash.
-	if cH, tH := types.HashConsensusParams(res.ConsensusParams), l.ConsensusHash; !bytes.Equal(cH, tH) {
+	if cH, tH := res.ConsensusParams.HashConsensusParams(), l.ConsensusHash; !bytes.Equal(cH, tH) {
 		return nil, fmt.Errorf("params hash %X does not match trusted hash %X",
 			cH, tH)
 	}
@@ -253,7 +278,7 @@ func (c *Client) BlockchainInfo(ctx context.Context, minHeight, maxHeight int64)
 	// Update the light client if we're behind.
 	if len(res.BlockMetas) > 0 {
 		lastHeight := res.BlockMetas[len(res.BlockMetas)-1].Header.Height
-		if _, err := c.updateLightClientIfNeededTo(ctx, lastHeight); err != nil {
+		if _, err := c.updateLightClientIfNeededTo(ctx, &lastHeight); err != nil {
 			return nil, err
 		}
 	}
@@ -277,6 +302,10 @@ func (c *Client) Genesis(ctx context.Context) (*ctypes.ResultGenesis, error) {
 	return c.next.Genesis(ctx)
 }
 
+func (c *Client) GenesisChunked(ctx context.Context, id uint) (*ctypes.ResultGenesisChunk, error) {
+	return c.next.GenesisChunked(ctx, id)
+}
+
 // Block calls rpcclient#Block and then verifies the result.
 func (c *Client) Block(ctx context.Context, height *int64) (*ctypes.ResultBlock, error) {
 	res, err := c.next.Block(ctx, height)
@@ -297,7 +326,7 @@ func (c *Client) Block(ctx context.Context, height *int64) (*ctypes.ResultBlock,
 	}
 
 	// Update the light client if we're behind.
-	l, err := c.updateLightClientIfNeededTo(ctx, res.Block.Height)
+	l, err := c.updateLightClientIfNeededTo(ctx, &res.Block.Height)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +341,7 @@ func (c *Client) Block(ctx context.Context, height *int64) (*ctypes.ResultBlock,
 }
 
 // BlockByHash calls rpcclient#BlockByHash and then verifies the result.
-func (c *Client) BlockByHash(ctx context.Context, hash []byte) (*ctypes.ResultBlock, error) {
+func (c *Client) BlockByHash(ctx context.Context, hash tmbytes.HexBytes) (*ctypes.ResultBlock, error) {
 	res, err := c.next.BlockByHash(ctx, hash)
 	if err != nil {
 		return nil, err
@@ -331,7 +360,7 @@ func (c *Client) BlockByHash(ctx context.Context, hash []byte) (*ctypes.ResultBl
 	}
 
 	// Update the light client if we're behind.
-	l, err := c.updateLightClientIfNeededTo(ctx, res.Block.Height)
+	l, err := c.updateLightClientIfNeededTo(ctx, &res.Block.Height)
 	if err != nil {
 		return nil, err
 	}
@@ -368,11 +397,12 @@ func (c *Client) BlockResults(ctx context.Context, height *int64) (*ctypes.Resul
 
 	// Validate res.
 	if res.Height <= 0 {
-		return nil, errNegOrZeroHeight
+		return nil, ctypes.ErrZeroOrNegativeHeight
 	}
 
 	// Update the light client if we're behind.
-	trustedBlock, err := c.updateLightClientIfNeededTo(ctx, h+1)
+	nextHeight := h + 1
+	trustedBlock, err := c.updateLightClientIfNeededTo(ctx, &nextHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +440,8 @@ func (c *Client) BlockResults(ctx context.Context, height *int64) (*ctypes.Resul
 
 func (c *Client) Commit(ctx context.Context, height *int64) (*ctypes.ResultCommit, error) {
 	// Update the light client if we're behind and retrieve the light block at the requested height
-	l, err := c.updateLightClientIfNeededTo(ctx, *height)
+	// or at the latest height if no height is provided.
+	l, err := c.updateLightClientIfNeededTo(ctx, height)
 	if err != nil {
 		return nil, err
 	}
@@ -421,23 +452,9 @@ func (c *Client) Commit(ctx context.Context, height *int64) (*ctypes.ResultCommi
 	}, nil
 }
 
-func (c *Client) DataAvailabilityHeader(
-	ctx context.Context,
-	height *int64,
-) (*ctypes.ResultDataAvailabilityHeader, error) {
-	l, err := c.updateLightClientIfNeededTo(ctx, *height)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ctypes.ResultDataAvailabilityHeader{
-		DataAvailabilityHeader: *l.DataAvailabilityHeader,
-	}, nil
-}
-
 // Tx calls rpcclient#Tx method and then verifies the proof if such was
 // requested.
-func (c *Client) Tx(ctx context.Context, hash []byte, prove bool) (*ctypes.ResultTx, error) {
+func (c *Client) Tx(ctx context.Context, hash tmbytes.HexBytes, prove bool) (*ctypes.ResultTx, error) {
 	res, err := c.next.Tx(ctx, hash, prove)
 	if err != nil || !prove {
 		return res, err
@@ -445,11 +462,11 @@ func (c *Client) Tx(ctx context.Context, hash []byte, prove bool) (*ctypes.Resul
 
 	// Validate res.
 	if res.Height <= 0 {
-		return nil, errNegOrZeroHeight
+		return nil, ctypes.ErrZeroOrNegativeHeight
 	}
 
 	// Update the light client if we're behind.
-	l, err := c.updateLightClientIfNeededTo(ctx, res.Height)
+	l, err := c.updateLightClientIfNeededTo(ctx, &res.Height)
 	if err != nil {
 		return nil, err
 	}
@@ -458,16 +475,35 @@ func (c *Client) Tx(ctx context.Context, hash []byte, prove bool) (*ctypes.Resul
 	return res, res.Proof.Validate(l.DataHash)
 }
 
-func (c *Client) TxSearch(ctx context.Context, query string, prove bool, page, perPage *int, orderBy string) (
-	*ctypes.ResultTxSearch, error) {
+func (c *Client) TxSearch(
+	ctx context.Context,
+	query string,
+	prove bool,
+	page, perPage *int,
+	orderBy string,
+) (*ctypes.ResultTxSearch, error) {
 	return c.next.TxSearch(ctx, query, prove, page, perPage, orderBy)
 }
 
+func (c *Client) BlockSearch(
+	ctx context.Context,
+	query string,
+	page, perPage *int,
+	orderBy string,
+) (*ctypes.ResultBlockSearch, error) {
+	return c.next.BlockSearch(ctx, query, page, perPage, orderBy)
+}
+
 // Validators fetches and verifies validators.
-func (c *Client) Validators(ctx context.Context, height *int64, pagePtr, perPagePtr *int) (*ctypes.ResultValidators,
-	error) {
-	// Update the light client if we're behind and retrieve the light block at the requested height.
-	l, err := c.updateLightClientIfNeededTo(ctx, *height)
+func (c *Client) Validators(
+	ctx context.Context,
+	height *int64,
+	pagePtr, perPagePtr *int,
+) (*ctypes.ResultValidators, error) {
+
+	// Update the light client if we're behind and retrieve the light block at the
+	// requested height or at the latest height if no height is provided.
+	l, err := c.updateLightClientIfNeededTo(ctx, height)
 	if err != nil {
 		return nil, err
 	}
@@ -480,11 +516,10 @@ func (c *Client) Validators(ctx context.Context, height *int64, pagePtr, perPage
 	}
 
 	skipCount := validateSkipCount(page, perPage)
-
 	v := l.ValidatorSet.Validators[skipCount : skipCount+tmmath.MinInt(perPage, totalCount-skipCount)]
 
 	return &ctypes.ResultValidators{
-		BlockHeight: *height,
+		BlockHeight: l.Height,
 		Validators:  v,
 		Count:       len(v),
 		Total:       totalCount}, nil
@@ -507,10 +542,18 @@ func (c *Client) UnsubscribeAll(ctx context.Context, subscriber string) error {
 	return c.next.UnsubscribeAll(ctx, subscriber)
 }
 
-func (c *Client) updateLightClientIfNeededTo(ctx context.Context, height int64) (*types.LightBlock, error) {
-	l, err := c.lc.VerifyLightBlockAtHeight(ctx, height, time.Now())
+func (c *Client) updateLightClientIfNeededTo(ctx context.Context, height *int64) (*types.LightBlock, error) {
+	var (
+		l   *types.LightBlock
+		err error
+	)
+	if height == nil {
+		l, err = c.lc.Update(ctx, time.Now())
+	} else {
+		l, err = c.lc.VerifyLightBlockAtHeight(ctx, *height, time.Now())
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to update light client to %d: %w", height, err)
+		return nil, fmt.Errorf("failed to update light client: %w", err)
 	}
 	return l, nil
 }
@@ -577,7 +620,7 @@ const (
 
 func validatePage(pagePtr *int, perPage, totalCount int) (int, error) {
 	if perPage < 1 {
-		panic(fmt.Sprintf("zero or negative perPage: %d", perPage))
+		panic(fmt.Errorf("%w (%d)", ctypes.ErrZeroOrNegativePerPage, perPage))
 	}
 
 	if pagePtr == nil { // no page parameter
@@ -590,7 +633,7 @@ func validatePage(pagePtr *int, perPage, totalCount int) (int, error) {
 	}
 	page := *pagePtr
 	if page <= 0 || page > pages {
-		return 1, fmt.Errorf("page should be within [1, %d] range, given %d", pages, page)
+		return 1, fmt.Errorf("%w expected range: [1, %d], given %d", ctypes.ErrPageOutOfRange, pages, page)
 	}
 
 	return page, nil

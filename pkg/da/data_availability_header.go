@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/celestiaorg/celestia-core/crypto/merkle"
-	"github.com/celestiaorg/celestia-core/crypto/tmhash"
-	"github.com/celestiaorg/celestia-core/pkg/consts"
-	"github.com/celestiaorg/celestia-core/pkg/wrapper"
-	daproto "github.com/celestiaorg/celestia-core/proto/tendermint/da"
 	"github.com/celestiaorg/rsmt2d"
+	"github.com/tendermint/tendermint/crypto/merkle"
+	"github.com/tendermint/tendermint/crypto/tmhash"
+	"github.com/tendermint/tendermint/pkg/consts"
+	"github.com/tendermint/tendermint/pkg/wrapper"
+	daproto "github.com/tendermint/tendermint/proto/tendermint/da"
 )
 
 const (

@@ -7,10 +7,10 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/celestiaorg/celestia-core/pkg/consts"
 	"github.com/celestiaorg/nmt"
 	"github.com/celestiaorg/rsmt2d"
 	"github.com/stretchr/testify/assert"
+	"github.com/tendermint/tendermint/pkg/consts"
 )
 
 func TestPushErasuredNamespacedMerkleTree(t *testing.T) {

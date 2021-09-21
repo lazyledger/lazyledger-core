@@ -6,10 +6,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/celestiaorg/celestia-core/libs/db/memdb"
-	tmrand "github.com/celestiaorg/celestia-core/libs/rand"
-	sm "github.com/celestiaorg/celestia-core/state"
-	"github.com/celestiaorg/celestia-core/types"
+	tmrand "github.com/tendermint/tendermint/libs/rand"
+	sm "github.com/tendermint/tendermint/state"
+	"github.com/tendermint/tendermint/types"
 )
 
 func TestTxFilter(t *testing.T) {
@@ -23,15 +22,13 @@ func TestTxFilter(t *testing.T) {
 		tx    types.Tx
 		isErr bool
 	}{
-		{types.Tx(tmrand.Bytes(2139)), false},
+		{types.Tx(tmrand.Bytes(2149)), false},
 		{types.Tx(tmrand.Bytes(2150)), true},
 		{types.Tx(tmrand.Bytes(3000)), true},
 	}
 
 	for i, tc := range testCases {
-		stateDB := memdb.NewDB()
-		stateStore := sm.NewStore(stateDB)
-		state, err := stateStore.LoadFromDBOrGenesisDoc(genDoc)
+		state, err := sm.MakeGenesisState(genDoc)
 		require.NoError(t, err)
 
 		f := sm.TxPreCheck(state)

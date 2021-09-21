@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/celestiaorg/celestia-core/pkg/consts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tendermint/tendermint/pkg/consts"
 )
 
 func TestNilDataAvailabilityHeaderHashDoesntCrash(t *testing.T) {

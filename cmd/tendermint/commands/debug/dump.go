@@ -11,9 +11,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	cfg "github.com/celestiaorg/celestia-core/config"
-	"github.com/celestiaorg/celestia-core/libs/cli"
-	rpchttp "github.com/celestiaorg/celestia-core/rpc/client/http"
+	cfg "github.com/tendermint/tendermint/config"
+	"github.com/tendermint/tendermint/libs/cli"
+	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
 var dumpCmd = &cobra.Command{
@@ -59,7 +59,7 @@ func dumpCmdHandler(_ *cobra.Command, args []string) error {
 		}
 	}
 
-	rpc, err := rpchttp.New(nodeRPCAddr, "/websocket")
+	rpc, err := rpchttp.New(nodeRPCAddr)
 	if err != nil {
 		return fmt.Errorf("failed to create new http client: %w", err)
 	}

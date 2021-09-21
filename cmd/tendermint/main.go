@@ -4,17 +4,18 @@ import (
 	"os"
 	"path/filepath"
 
-	cmd "github.com/celestiaorg/celestia-core/cmd/tendermint/commands"
-	"github.com/celestiaorg/celestia-core/cmd/tendermint/commands/debug"
-	cfg "github.com/celestiaorg/celestia-core/config"
-	"github.com/celestiaorg/celestia-core/libs/cli"
-	nm "github.com/celestiaorg/celestia-core/node"
+	cmd "github.com/tendermint/tendermint/cmd/tendermint/commands"
+	"github.com/tendermint/tendermint/cmd/tendermint/commands/debug"
+	cfg "github.com/tendermint/tendermint/config"
+	"github.com/tendermint/tendermint/libs/cli"
+	nm "github.com/tendermint/tendermint/node"
 )
 
 func main() {
 	rootCmd := cmd.RootCmd
 	rootCmd.AddCommand(
 		cmd.GenValidatorCmd,
+		cmd.ReIndexEventCmd,
 		cmd.InitFilesCmd,
 		cmd.ProbeUpnpCmd,
 		cmd.LightCmd,
@@ -27,6 +28,8 @@ func main() {
 		cmd.ShowNodeIDCmd,
 		cmd.GenNodeKeyCmd,
 		cmd.VersionCmd,
+		cmd.InspectCmd,
+		cmd.MakeKeyMigrateCommand(),
 		debug.DebugCmd,
 		cli.NewCompletionCmd(rootCmd, true),
 	)
@@ -38,8 +41,8 @@ func main() {
 	//	* Supply a genesis doc file from another source
 	//	* Provide their own DB implementation
 	// can copy this file and use something other than the
-	// DefaultNewNode function
-	nodeFunc := nm.DefaultNewNode
+	// node.NewDefault function
+	nodeFunc := nm.NewDefault
 
 	// Create & start node
 	rootCmd.AddCommand(cmd.NewRunNodeCmd(nodeFunc))

@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/celestiaorg/celestia-core/libs/bytes"
-	types "github.com/celestiaorg/celestia-core/rpc/jsonrpc/types"
+	"github.com/tendermint/tendermint/libs/bytes"
+	types "github.com/tendermint/tendermint/rpc/jsonrpc/types"
 )
 
 func TestParseJSONMap(t *testing.T) {
@@ -135,7 +135,7 @@ func TestParseJSONArray(t *testing.T) {
 
 func TestParseJSONRPC(t *testing.T) {
 	demo := func(ctx *types.Context, height int, name string) {}
-	call := NewRPCFunc(demo, "height,name")
+	call := NewRPCFunc(demo, "height,name", false)
 
 	cases := []struct {
 		raw    string
@@ -172,7 +172,7 @@ func TestParseJSONRPC(t *testing.T) {
 
 func TestParseURI(t *testing.T) {
 	demo := func(ctx *types.Context, height int, name string) {}
-	call := NewRPCFunc(demo, "height,name")
+	call := NewRPCFunc(demo, "height,name", false)
 
 	cases := []struct {
 		raw    []string

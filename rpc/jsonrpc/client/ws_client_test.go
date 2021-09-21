@@ -12,9 +12,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
-	"github.com/celestiaorg/celestia-core/libs/log"
-	tmsync "github.com/celestiaorg/celestia-core/libs/sync"
-	types "github.com/celestiaorg/celestia-core/rpc/jsonrpc/types"
+	tmsync "github.com/tendermint/tendermint/internal/libs/sync"
+	"github.com/tendermint/tendermint/libs/log"
+	types "github.com/tendermint/tendermint/rpc/jsonrpc/types"
 )
 
 var wsCallTimeout = 5 * time.Second

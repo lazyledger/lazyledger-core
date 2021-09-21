@@ -8,11 +8,11 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/celestiaorg/celestia-core/abci/types"
-	tmlog "github.com/celestiaorg/celestia-core/libs/log"
-	tmnet "github.com/celestiaorg/celestia-core/libs/net"
-	"github.com/celestiaorg/celestia-core/libs/service"
-	tmsync "github.com/celestiaorg/celestia-core/libs/sync"
+	"github.com/tendermint/tendermint/abci/types"
+	tmsync "github.com/tendermint/tendermint/internal/libs/sync"
+	tmlog "github.com/tendermint/tendermint/libs/log"
+	tmnet "github.com/tendermint/tendermint/libs/net"
+	"github.com/tendermint/tendermint/libs/service"
 )
 
 // var maxNumberConnections = 2
@@ -233,9 +233,6 @@ func (s *SocketServer) handleRequest(req *types.Request, responses chan<- *types
 	case *types.Request_ApplySnapshotChunk:
 		res := s.app.ApplySnapshotChunk(*r.ApplySnapshotChunk)
 		responses <- types.ToResponseApplySnapshotChunk(res)
-	case *types.Request_PreprocessTxs:
-		res := s.app.PreprocessTxs(*r.PreprocessTxs)
-		responses <- types.ToResponsePreprocessTx(res)
 	default:
 		responses <- types.ToResponseException("Unknown request")
 	}
