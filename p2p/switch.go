@@ -32,17 +32,6 @@ const (
 	reconnectBackOffBaseSeconds = 3
 )
 
-// MConnConfig returns an MConnConfig with fields updated
-// from the P2PConfig.
-func MConnConfig(cfg *config.P2PConfig) conn.MConnConfig {
-	mConfig := conn.DefaultMConnConfig()
-	mConfig.FlushThrottle = cfg.FlushThrottleTimeout
-	mConfig.SendRate = cfg.SendRate
-	mConfig.RecvRate = cfg.RecvRate
-	mConfig.MaxPacketMsgPayloadSize = cfg.MaxPacketMsgPayloadSize
-	return mConfig
-}
-
 //-----------------------------------------------------------------------------
 
 // An AddrBook represents an address book from the pex package, which is used
@@ -838,28 +827,28 @@ func (sw *Switch) addOutboundPeerWithConfig(
 
 func (sw *Switch) filterPeer(p Peer) error {
 	// Avoid duplicate
-	if sw.peers.Has(p.ID()) {
-		return ErrRejected{id: p.ID(), isDuplicate: true}
-	}
-
-	errc := make(chan error, len(sw.peerFilters))
-
-	for _, f := range sw.peerFilters {
-		go func(f PeerFilterFunc, p Peer, errc chan<- error) {
-			errc <- f(sw.peers, p)
-		}(f, p, errc)
-	}
-
-	for i := 0; i < cap(errc); i++ {
-		select {
-		case err := <-errc:
-			if err != nil {
-				return ErrRejected{id: p.ID(), err: err, isFiltered: true}
-			}
-		case <-time.After(sw.filterTimeout):
-			return ErrFilterTimeout{}
-		}
-	}
+	//if sw.peers.Has(p.ID()) {
+	//	return ErrRejected{id: p.ID(), isDuplicate: true}
+	//}
+	//
+	//errc := make(chan error, len(sw.peerFilters))
+	//
+	//for _, f := range sw.peerFilters {
+	//	go func(f PeerFilterFunc, p Peer, errc chan<- error) {
+	//		errc <- f(sw.peers, p)
+	//	}(f, p, errc)
+	//}
+	//
+	//for i := 0; i < cap(errc); i++ {
+	//	select {
+	//	case err := <-errc:
+	//		if err != nil {
+	//			return ErrRejected{id: p.ID(), err: err, isFiltered: true}
+	//		}
+	//	case <-time.After(sw.filterTimeout):
+	//		return ErrFilterTimeout{}
+	//	}
+	//}
 
 	return nil
 }

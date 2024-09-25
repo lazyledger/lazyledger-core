@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/quic-go/quic-go"
+	abci "github.com/tendermint/tendermint/abci/types"
 	"net"
 	"net/http"
 	_ "net/http/pprof" //nolint: gosec // securely exposed on separate, optional port
@@ -18,7 +20,6 @@ import (
 
 	dbm "github.com/cometbft/cometbft-db"
 
-	abci "github.com/tendermint/tendermint/abci/types"
 	bcv0 "github.com/tendermint/tendermint/blockchain/v0"
 	bcv1 "github.com/tendermint/tendermint/blockchain/v1"
 	bcv2 "github.com/tendermint/tendermint/blockchain/v2"
@@ -550,8 +551,7 @@ func createTransport(
 	[]p2p.PeerFilterFunc,
 ) {
 	var (
-		mConnConfig = p2p.MConnConfig(config.P2P)
-		transport   = p2p.NewMultiplexTransport(nodeInfo, *nodeKey, mConnConfig, trace.NoOpTracer())
+		transport   = p2p.NewMultiplexTransport(nodeInfo, *nodeKey, trace.NoOpTracer())
 		connFilters = []p2p.ConnFilterFunc{}
 		peerFilters = []p2p.PeerFilterFunc{}
 	)
@@ -566,7 +566,7 @@ func createTransport(
 		connFilters = append(
 			connFilters,
 			// ABCI query for address filtering.
-			func(_ p2p.ConnSet, c net.Conn, _ []net.IP) error {
+			func(_ p2p.ConnSet, c quic.Connection, _ []net.IP) error {
 				res, err := proxyApp.Query().QuerySync(abci.RequestQuery{
 					Path: fmt.Sprintf("/p2p/filter/addr/%s", c.RemoteAddr().String()),
 				})

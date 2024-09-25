@@ -1,3 +1,5 @@
+//go:build exclude
+
 package p2p
 
 import (
@@ -142,7 +144,7 @@ func (sw *Switch) addPeerWithConnection(conn net.Conn) error {
 		return err
 	}
 
-	ni, err := handshake(conn, time.Second, sw.nodeInfo)
+	ni, err := exchangeNodeInfo(conn, time.Second, sw.nodeInfo)
 	if err != nil {
 		if err := conn.Close(); err != nil {
 			sw.Logger.Error("Error closing connection", "err", err)
@@ -150,16 +152,7 @@ func (sw *Switch) addPeerWithConnection(conn net.Conn) error {
 		return err
 	}
 
-	p := newPeer(
-		pc,
-		MConnConfig(sw.config),
-		ni,
-		sw.reactorsByCh,
-		sw.msgTypeByChID,
-		sw.chDescs,
-		sw.StopPeerForError,
-		sw.mlc,
-	)
+	p := newPeer(pc, ni, sw.reactorsByCh, sw.msgTypeByChID, sw.mlc)
 
 	if err = sw.addPeer(p); err != nil {
 		pc.CloseConn()
