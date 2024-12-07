@@ -25,6 +25,7 @@ import (
 	cs "github.com/tendermint/tendermint/consensus"
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/evidence"
+	"github.com/tendermint/tendermint/mempool"
 	"github.com/tendermint/tendermint/pkg/trace"
 
 	cmtjson "github.com/tendermint/tendermint/libs/json"
@@ -32,10 +33,7 @@ import (
 	cmtpubsub "github.com/tendermint/tendermint/libs/pubsub"
 	"github.com/tendermint/tendermint/libs/service"
 	"github.com/tendermint/tendermint/light"
-	mempl "github.com/tendermint/tendermint/mempool"
-	mempoolv2 "github.com/tendermint/tendermint/mempool/cat"
-	mempoolv0 "github.com/tendermint/tendermint/mempool/v0"
-	mempoolv1 "github.com/tendermint/tendermint/mempool/v1"
+	"github.com/tendermint/tendermint/mempool/cat"
 	"github.com/tendermint/tendermint/p2p"
 	"github.com/tendermint/tendermint/p2p/pex"
 	"github.com/tendermint/tendermint/privval"
@@ -119,19 +117,19 @@ func DefaultNewNode(config *cfg.Config, logger log.Logger) (*Node, error) {
 }
 
 // MetricsProvider returns a consensus, p2p and mempool Metrics.
-type MetricsProvider func(chainID, softwareVersion string) (*cs.Metrics, *p2p.Metrics, *mempl.Metrics, *sm.Metrics)
+type MetricsProvider func(chainID, softwareVersion string) (*cs.Metrics, *p2p.Metrics, *mempool.Metrics, *sm.Metrics)
 
 // DefaultMetricsProvider returns Metrics build using Prometheus client library
 // if Prometheus is enabled. Otherwise, it returns no-op Metrics.
 func DefaultMetricsProvider(config *cfg.InstrumentationConfig) MetricsProvider {
-	return func(chainID, softwareVersion string) (*cs.Metrics, *p2p.Metrics, *mempl.Metrics, *sm.Metrics) {
+	return func(chainID, softwareVersion string) (*cs.Metrics, *p2p.Metrics, *mempool.Metrics, *sm.Metrics) {
 		if config.Prometheus {
 			return cs.PrometheusMetrics(config.Namespace, "chain_id", chainID, "version", softwareVersion),
 				p2p.PrometheusMetrics(config.Namespace, "chain_id", chainID, "version", softwareVersion),
-				mempl.PrometheusMetrics(config.Namespace, "chain_id", chainID, "version", softwareVersion),
+				mempool.PrometheusMetrics(config.Namespace, "chain_id", chainID, "version", softwareVersion),
 				sm.PrometheusMetrics(config.Namespace, "chain_id", chainID, "version", softwareVersion)
 		}
-		return cs.NopMetrics(), p2p.NopMetrics(), mempl.NopMetrics(), sm.NopMetrics()
+		return cs.NopMetrics(), p2p.NopMetrics(), mempool.NopMetrics(), sm.NopMetrics()
 	}
 }
 
@@ -219,7 +217,7 @@ type Node struct {
 	blockStore        *store.BlockStore // store the blockchain to disk
 	bcReactor         p2p.Reactor       // for fast-syncing
 	mempoolReactor    p2p.Reactor       // for gossipping transactions
-	mempool           mempl.Mempool
+	mempool           mempool.Mempool
 	stateSync         bool                    // whether the node should state sync on startup
 	stateSyncReactor  *statesync.Reactor      // for hosting and restoring state sync snapshots
 	stateSyncProvider statesync.StateProvider // provides state data for bootstrapping a node
@@ -376,91 +374,39 @@ func createMempoolAndMempoolReactor(
 	config *cfg.Config,
 	proxyApp proxy.AppConns,
 	state sm.State,
-	memplMetrics *mempl.Metrics,
+	mempoolMetrics *mempool.Metrics,
 	logger log.Logger,
 	traceClient trace.Tracer,
-) (mempl.Mempool, p2p.Reactor) {
-	switch config.Mempool.Version {
-	case cfg.MempoolV2:
-		mp := mempoolv2.NewTxPool(
-			logger,
-			config.Mempool,
-			proxyApp.Mempool(),
-			state.LastBlockHeight,
-			mempoolv2.WithMetrics(memplMetrics),
-			mempoolv2.WithPreCheck(sm.TxPreCheck(state)),
-			mempoolv2.WithPostCheck(sm.TxPostCheck(state)),
-		)
+) (mempool.Mempool, *cat.Reactor) {
+	mp := cat.NewTxPool(
+		logger,
+		config.Mempool,
+		proxyApp.Mempool(),
+		state.LastBlockHeight,
+		cat.WithMetrics(mempoolMetrics),
+		cat.WithPreCheck(sm.TxPreCheck(state)),
+		cat.WithPostCheck(sm.TxPostCheck(state)),
+	)
 
-		reactor, err := mempoolv2.NewReactor(
-			mp,
-			&mempoolv2.ReactorOptions{
-				ListenOnly:     !config.Mempool.Broadcast,
-				MaxTxSize:      config.Mempool.MaxTxBytes,
-				TraceClient:    traceClient,
-				MaxGossipDelay: config.Mempool.MaxGossipDelay,
-			},
-		)
-		if err != nil {
-			// TODO: find a more polite way of handling this error
-			panic(err)
-		}
-		if config.Consensus.WaitForTxs() {
-			mp.EnableTxsAvailable()
-		}
-		reactor.SetLogger(logger)
-
-		return mp, reactor
-	case cfg.MempoolV1:
-		mp := mempoolv1.NewTxMempool(
-			logger,
-			config.Mempool,
-			proxyApp.Mempool(),
-			state.LastBlockHeight,
-			mempoolv1.WithMetrics(memplMetrics),
-			mempoolv1.WithPreCheck(sm.TxPreCheck(state)),
-			mempoolv1.WithPostCheck(sm.TxPostCheck(state)),
-			mempoolv1.WithTraceClient(traceClient),
-		)
-
-		reactor := mempoolv1.NewReactor(
-			config.Mempool,
-			mp,
-			traceClient,
-		)
-		if config.Consensus.WaitForTxs() {
-			mp.EnableTxsAvailable()
-		}
-		reactor.SetLogger(logger)
-
-		return mp, reactor
-
-	case cfg.MempoolV0:
-		mp := mempoolv0.NewCListMempool(
-			config.Mempool,
-			proxyApp.Mempool(),
-			state.LastBlockHeight,
-			mempoolv0.WithMetrics(memplMetrics),
-			mempoolv0.WithPreCheck(sm.TxPreCheck(state)),
-			mempoolv0.WithPostCheck(sm.TxPostCheck(state)),
-		)
-
-		mp.SetLogger(logger)
-
-		reactor := mempoolv0.NewReactor(
-			config.Mempool,
-			mp,
-		)
-		if config.Consensus.WaitForTxs() {
-			mp.EnableTxsAvailable()
-		}
-		reactor.SetLogger(logger)
-
-		return mp, reactor
-
-	default:
-		return nil, nil
+	reactor, err := cat.NewReactor(
+		mp,
+		&cat.ReactorOptions{
+			ListenOnly:     !config.Mempool.Broadcast,
+			MaxTxSize:      config.Mempool.MaxTxBytes,
+			TraceClient:    traceClient,
+			MaxGossipDelay: config.Mempool.MaxGossipDelay,
+		},
+	)
+	if err != nil {
+		// TODO: find a more polite way of handling this error
+		panic(err)
 	}
+	if config.Consensus.WaitForTxs() {
+		mp.EnableTxsAvailable()
+	}
+	reactor.SetLogger(logger)
+
+	return mp, reactor
 }
 
 func createEvidenceReactor(config *cfg.Config, dbProvider DBProvider,
@@ -508,7 +454,8 @@ func createConsensusReactor(config *cfg.Config,
 	state sm.State,
 	blockExec *sm.BlockExecutor,
 	blockStore sm.BlockStore,
-	mempool mempl.Mempool,
+	mempool mempool.Mempool,
+	txFetcher cs.TxFetcher,
 	evidencePool *evidence.Pool,
 	privValidator types.PrivValidator,
 	csMetrics *cs.Metrics,
@@ -523,6 +470,7 @@ func createConsensusReactor(config *cfg.Config,
 		blockExec,
 		blockStore,
 		mempool,
+		txFetcher,
 		evidencePool,
 		cs.StateMetrics(csMetrics),
 		cs.SetTraceClient(traceClient),
@@ -926,7 +874,7 @@ func NewNodeWithContext(ctx context.Context,
 		csMetrics.FastSyncing.Set(1)
 	}
 	consensusReactor, consensusState := createConsensusReactor(
-		config, state, blockExec, blockStore, mempool, evidencePool,
+		config, state, blockExec, blockStore, mempool, mempoolReactor, evidencePool,
 		privValidator, csMetrics, stateSync || fastSync, eventBus, consensusLogger, tracer,
 	)
 
@@ -1398,7 +1346,7 @@ func (n *Node) MempoolReactor() p2p.Reactor {
 }
 
 // Mempool returns the Node's mempool.
-func (n *Node) Mempool() mempl.Mempool {
+func (n *Node) Mempool() mempool.Mempool {
 	return n.mempool
 }
 
@@ -1492,7 +1440,7 @@ func makeNodeInfo(
 		Channels: []byte{
 			bcChannel,
 			cs.StateChannel, cs.DataChannel, cs.VoteChannel, cs.VoteSetBitsChannel,
-			mempl.MempoolChannel,
+			mempool.MempoolChannel,
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
 		},
@@ -1508,7 +1456,8 @@ func makeNodeInfo(
 	}
 
 	if config.Mempool.Version == cfg.MempoolV2 {
-		nodeInfo.Channels = append(nodeInfo.Channels, mempoolv2.MempoolStateChannel)
+		nodeInfo.Channels = append(nodeInfo.Channels, cat.MempoolStateChannel)
+		nodeInfo.Channels = append(nodeInfo.Channels, cat.MempoolRecoveryChannel)
 	}
 
 	lAddr := config.P2P.ExternalAddress

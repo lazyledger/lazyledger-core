@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/tendermint/tendermint/abci/example/code"
@@ -91,6 +90,7 @@ func setup(t testing.TB, cacheSize int, options ...TxPoolOption) *TxPool {
 
 	cfg := config.TestMempoolConfig()
 	cfg.CacheSize = cacheSize
+	cfg.Broadcast = false
 
 	appConnMem, err := cc.NewABCIClient()
 	require.NoError(t, err)
@@ -128,7 +128,9 @@ func checkTxs(t *testing.T, txmp *TxPool, numTxs int, peerID uint16) []testTx {
 			tx:       newTx(i, peerID, prefix, priority),
 			priority: priority,
 		}
-		require.NoError(t, txmp.CheckTx(txs[i].tx, nil, txInfo))
+		require.NoError(t, txmp.CheckTx(txs[i].tx, func(r *abci.Response) {
+			require.Equal(t, uint32(0), r.GetCheckTx().Code)
+		}, txInfo))
 		// assert that none of them get silently evicted
 		require.Equal(t, current+i+1, txmp.Size())
 	}
@@ -210,6 +212,8 @@ func TestTxPool_Size(t *testing.T) {
 
 	txmp.Lock()
 	require.NoError(t, txmp.Update(1, rawTxs[:50], responses, nil, nil))
+	// txs are removed with a one block delay so we need to call this twice
+	require.NoError(t, txmp.Update(1, nil, nil, nil, nil))
 	txmp.Unlock()
 
 	require.Equal(t, len(rawTxs)/2, txmp.Size())
@@ -296,6 +300,8 @@ func TestTxPool_Eviction(t *testing.T) {
 	// Free up some space so we can add back previously evicted txs
 	err = txmp.Update(1, types.Txs{types.Tx("key10=0123456789abcdef=11")}, []*abci.ResponseDeliverTx{{Code: abci.CodeTypeOK}}, nil, nil)
 	require.NoError(t, err)
+	// need to call Update twice to actually remove the transaction
+	_ = txmp.Update(2, nil, nil, nil, nil)
 	require.False(t, txExists("key10=0123456789abcdef=11"))
 	mustCheckTx(t, txmp, "key3=0002=10")
 	require.True(t, txExists("key3=0002=10"))
@@ -333,7 +339,7 @@ func TestTxPool_Flush(t *testing.T) {
 }
 
 func TestTxPool_ReapMaxBytesMaxGas(t *testing.T) {
-	txmp := setup(t, 0)
+	txmp := setup(t, 0, WithInclusionDelay(0))
 	tTxs := checkTxs(t, txmp, 100, 0) // all txs request 1 gas unit
 	require.Equal(t, len(tTxs), txmp.Size())
 	require.Equal(t, int64(5800), txmp.SizeBytes())
@@ -385,7 +391,7 @@ func TestTxPool_ReapMaxBytesMaxGas(t *testing.T) {
 
 func TestTxMempoolTxLargerThanMaxBytes(t *testing.T) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	txmp := setup(t, 0)
+	txmp := setup(t, 0, WithInclusionDelay(0))
 	bigPrefix := make([]byte, 100)
 	_, err := rng.Read(bigPrefix)
 	require.NoError(t, err)
@@ -406,7 +412,7 @@ func TestTxMempoolTxLargerThanMaxBytes(t *testing.T) {
 }
 
 func TestTxPool_ReapMaxTxs(t *testing.T) {
-	txmp := setup(t, 0)
+	txmp := setup(t, 0, WithInclusionDelay(0))
 	txs := checkTxs(t, txmp, 100, 0)
 	require.Equal(t, len(txs), txmp.Size())
 	require.Equal(t, int64(5800), txmp.SizeBytes())
@@ -527,8 +533,8 @@ func TestTxPool_ConcurrentTxs(t *testing.T) {
 	}()
 
 	wg.Wait()
-	assert.Zero(t, txPool.Size())
-	assert.Zero(t, txPool.SizeBytes())
+	require.Zero(t, txPool.Size())
+	require.Zero(t, txPool.SizeBytes())
 }
 
 func generateResponses(numResponses int) (responses []*abci.ResponseDeliverTx) {
@@ -570,8 +576,6 @@ func TestTxPool_ExpiredTxs_Timestamp(t *testing.T) {
 	time.Sleep(3 * time.Millisecond)
 
 	// Trigger an update so that pruning will occur.
-	txmp.Lock()
-	defer txmp.Unlock()
 	require.NoError(t, txmp.Update(txmp.height+1, nil, nil, nil, nil))
 
 	// All the transactions in the original set should have been purged.
@@ -597,7 +601,7 @@ func TestTxPool_ExpiredTxs_Timestamp(t *testing.T) {
 }
 
 func TestTxPool_ExpiredTxs_NumBlocks(t *testing.T) {
-	txmp := setup(t, 500)
+	txmp := setup(t, 500, WithInclusionDelay(0))
 	txmp.height = 100
 	txmp.config.TTLNumBlocks = 10
 
@@ -611,9 +615,8 @@ func TestTxPool_ExpiredTxs_NumBlocks(t *testing.T) {
 		responses[i] = &abci.ResponseDeliverTx{Code: abci.CodeTypeOK}
 	}
 
-	txmp.Lock()
 	require.NoError(t, txmp.Update(txmp.height+1, reapedTxs, responses, nil, nil))
-	txmp.Unlock()
+	require.NoError(t, txmp.Update(txmp.height+2, nil, nil, nil, nil))
 
 	require.Equal(t, 95, txmp.Size())
 
@@ -708,6 +711,8 @@ func TestTxPool_RemoveBlobTx(t *testing.T) {
 
 	err = txmp.Update(1, []types.Tx{indexWrapper}, abciResponses(1, abci.CodeTypeOK), nil, nil)
 	require.NoError(t, err)
+	err = txmp.Update(1, nil, nil, nil, nil)
+	require.NoError(t, err)
 	require.EqualValues(t, 0, txmp.Size())
 	require.EqualValues(t, 0, txmp.SizeBytes())
 }
@@ -732,7 +737,7 @@ func TestTxPool_ConcurrentlyAddingTx(t *testing.T) {
 		wg.Add(1)
 		go func(sender uint16) {
 			defer wg.Done()
-			_, err := txPool.TryAddNewTx(tx, tx.Key(), mempool.TxInfo{SenderID: sender})
+			_, _, err := txPool.tryAddNewTx(tx, tx.Key(), mempool.TxInfo{SenderID: sender})
 			errCh <- err
 		}(uint16(i + 1))
 	}
@@ -758,27 +763,39 @@ func TestTxPool_BroadcastQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	txmp := setup(t, 1)
+	txmp.config.Broadcast = true
 	txs := 10
 
 	wg := sync.WaitGroup{}
+
 	wg.Add(1)
-
-	for i := 0; i < txs; i++ {
-		tx := newDefaultTx(fmt.Sprintf("%d", i))
-		require.NoError(t, txmp.CheckTx(tx, nil, mempool.TxInfo{SenderID: 0}))
-	}
-
 	go func() {
 		defer wg.Done()
 		for i := 0; i < txs; i++ {
+			tx := newDefaultTx(fmt.Sprintf("%d", i))
+			require.NoError(t, txmp.CheckTx(tx, nil, mempool.TxInfo{SenderID: 0}))
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			time.Sleep(20 * time.Millisecond)
 			select {
 			case <-ctx.Done():
-				assert.FailNowf(t, "failed to receive all txs (got %d/%d)", "", i+1, txs)
-			case wtx := <-txmp.next():
-				require.Equal(t, wtx.tx, newDefaultTx(fmt.Sprintf("%d", i)))
+				return
+			case <-txmp.priorityBroadcastQueue.isReady():
+				txmp.priorityBroadcastQueue.processIncomingTxs()
+			}
+			if txmp.priorityBroadcastQueue.queue.Len() == txs {
+				return
 			}
 		}
 	}()
 
 	wg.Wait()
+	if ctx.Err() != nil {
+		t.Fatalf("test timed out without processing all txs")
+	}
 }

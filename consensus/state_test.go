@@ -200,7 +200,7 @@ func TestStateBadProposal(t *testing.T) {
 	proposalCh := subscribe(cs1.eventBus, types.EventQueryCompleteProposal)
 	voteCh := subscribe(cs1.eventBus, types.EventQueryVote)
 
-	propBlock, _ := cs1.createProposalBlock() // changeProposer(t, cs1, vs2)
+	propBlock := cs1.createProposalBlock() // changeProposer(t, cs1, vs2)
 
 	// make the second validator the proposer by incrementing round
 	round++
@@ -215,7 +215,7 @@ func TestStateBadProposal(t *testing.T) {
 	propBlock.AppHash = stateHash
 	propBlockParts := propBlock.MakePartSet(partSize)
 	blockID := types.BlockID{Hash: propBlock.Hash(), PartSetHeader: propBlockParts.Header()}
-	proposal := types.NewProposal(vs2.Height, round, -1, blockID)
+	proposal := types.NewProposal(vs2.Height, round, -1, blockID, tmhash.Sum([]byte("compacthash")))
 	p := proposal.ToProto()
 	if err := vs2.SignProposal(config.ChainID(), p); err != nil {
 		t.Fatal("failed to sign bad proposal", err)
@@ -282,7 +282,7 @@ func TestStateOversizedBlock(t *testing.T) {
 			incrementRound(vss[1:]...)
 
 			blockID := types.BlockID{Hash: propBlock.Hash(), PartSetHeader: propBlockParts.Header()}
-			proposal := types.NewProposal(height, round, -1, blockID)
+			proposal := types.NewProposal(height, round, -1, blockID, tmhash.Sum([]byte("compacthash")))
 			p := proposal.ToProto()
 			if err := vs2.SignProposal(config.ChainID(), p); err != nil {
 				t.Fatal("failed to sign bad proposal", err)
@@ -1126,7 +1126,7 @@ func TestStateLockPOLSafety2(t *testing.T) {
 
 	round++ // moving to the next round
 	// in round 2 we see the polkad block from round 0
-	newProp := types.NewProposal(height, round, 0, propBlockID0)
+	newProp := types.NewProposal(height, round, 0, propBlockID0, tmhash.Sum([]byte("compacthash")))
 	p := newProp.ToProto()
 	if err := vs3.SignProposal(config.ChainID(), p); err != nil {
 		t.Fatal(err)

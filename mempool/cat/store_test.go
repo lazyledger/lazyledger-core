@@ -3,6 +3,8 @@ package cat
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -153,7 +155,7 @@ func TestStoreGetTxs(t *testing.T) {
 	require.Equal(t, numTxs, len(keys))
 
 	// get txs below a certain priority
-	txs, bz := store.getTxsBelowPriority(int64(numTxs / 2))
+	txs, bz := store.getEvictableTxsBelowPriority(int64(numTxs / 2))
 	require.Equal(t, numTxs/2, len(txs))
 	var actualBz int64
 	for _, tx := range txs {
@@ -183,4 +185,45 @@ func TestStoreExpiredTxs(t *testing.T) {
 
 	store.purgeExpiredTxs(int64(0), time.Now().Add(time.Second))
 	require.Empty(t, store.getAllTxs())
+}
+
+func TestStoreOrderTx(t *testing.T) {
+	store := newStore()
+
+	err := store.deleteOrderedTx(nil)
+	require.Error(t, err)
+
+	numTxs := 10
+	txs := make([]*wrappedTx, numTxs)
+	for i := 0; i < numTxs; i++ {
+		tx := types.Tx(fmt.Sprintf("tx%d", i))
+		key := tx.Key()
+		// some of them need to have the same priority in order to test the timestamp sorting
+		priority := int64(1)
+		if i%2 == 0 {
+			priority = rand.Int63()
+		}
+		wtx := newWrappedTx(tx, key, int64(i), 1, priority, "")
+		require.True(t, store.set(wtx))
+		txs[i] = wtx
+		fmt.Println(i, wtx.priority, wtx.timestamp)
+	}
+
+	require.True(t, sort.SliceIsSorted(store.orderedTxs, PriorityFn(store.orderedTxs)))
+
+	fmt.Println("ordered list")
+	for idx, tx := range store.orderedTxs {
+		fmt.Println(idx, tx.priority, tx.timestamp)
+	}
+
+	err = store.deleteOrderedTx(txs[5])
+	require.NoError(t, err)
+	require.Equal(t, numTxs-1, len(store.orderedTxs))
+
+	for idx, tx := range store.orderedTxs {
+		require.False(t, bytes.Equal(tx.tx, txs[5].tx), idx)
+	}
+
+	err = store.deleteOrderedTx(txs[5])
+	require.Error(t, err)
 }

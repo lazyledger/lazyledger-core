@@ -18,6 +18,7 @@ type wrappedTx struct {
 	gasWanted int64       // app: gas required to execute this transaction
 	priority  int64       // app: priority value for this transaction
 	sender    string      // app: assigned sender label
+	proposed  bool        // whether this transaction is part of a proposed block (and thus can't be evicted)
 }
 
 func newWrappedTx(tx types.Tx, key types.TxKey, height, gasWanted, priority int64, sender string) *wrappedTx {
@@ -29,6 +30,7 @@ func newWrappedTx(tx types.Tx, key types.TxKey, height, gasWanted, priority int6
 		gasWanted: gasWanted,
 		priority:  priority,
 		sender:    sender,
+		proposed:  false,
 	}
 }
 

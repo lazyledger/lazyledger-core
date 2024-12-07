@@ -692,9 +692,7 @@ func DefaultFuzzConnConfig() *FuzzConnConfig {
 // MempoolConfig defines the configuration options for the CometBFT mempool
 type MempoolConfig struct {
 	// Mempool version to use:
-	//  1) "v0" - FIFO mempool.
-	//  2) "v1" - (default) prioritized mempool.
-	//  3) "v2" - content addressable transaction pool
+	//  1) "v2" - (default) content addressable transaction pool
 	Version string `mapstructure:"version"`
 	// RootDir is the root directory for all data. This should be configured via
 	// the $CMTHOME env variable or --home cmd flag rather than overriding this
@@ -778,7 +776,7 @@ type MempoolConfig struct {
 // DefaultMempoolConfig returns a default configuration for the CometBFT mempool
 func DefaultMempoolConfig() *MempoolConfig {
 	return &MempoolConfig{
-		Version:   MempoolV1,
+		Version:   MempoolV2,
 		Recheck:   true,
 		Broadcast: true,
 		WalPath:   "",
@@ -815,6 +813,9 @@ func (cfg *MempoolConfig) WalEnabled() bool {
 // ValidateBasic performs basic validation (checking param bounds, etc.) and
 // returns an error if any check fails.
 func (cfg *MempoolConfig) ValidateBasic() error {
+	if cfg.Version != MempoolV2 {
+		return errors.New("only v2 mempool is supported for compact blocks")
+	}
 	if cfg.Size < 0 {
 		return errors.New("size can't be negative")
 	}
@@ -1019,7 +1020,7 @@ func DefaultConsensusConfig() *ConsensusConfig {
 		SkipTimeoutCommit:           false,
 		CreateEmptyBlocks:           true,
 		CreateEmptyBlocksInterval:   0 * time.Second,
-		PeerGossipSleepDuration:     100 * time.Millisecond,
+		PeerGossipSleepDuration:     10 * time.Millisecond,
 		PeerQueryMaj23SleepDuration: 2000 * time.Millisecond,
 		DoubleSignCheckHeight:       int64(0),
 	}

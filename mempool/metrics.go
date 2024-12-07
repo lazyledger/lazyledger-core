@@ -1,10 +1,17 @@
 package mempool
 
 import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"sync"
+	"time"
+
 	"github.com/go-kit/kit/metrics"
 	"github.com/go-kit/kit/metrics/discard"
 	"github.com/go-kit/kit/metrics/prometheus"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
+	"github.com/tendermint/tendermint/libs/os"
 )
 
 const (
@@ -58,6 +65,12 @@ type Metrics struct {
 	// never received a response in time and a new request was made.
 	RerequestedTxs metrics.Counter
 
+	// MissingTxs defines the number of transactions that were not found in the mempool
+	// from the current proposal
+	MissingTxs metrics.Counter
+
+	// RecoveryRate measures what percentage of missing transactions were able to be fetched
+	RecoveryRate metrics.Histogram
 	// Number of connections being actively used for gossiping transactions
 	// (experimental feature).
 	ActiveOutboundConnections metrics.Gauge
@@ -149,6 +162,22 @@ func PrometheusMetrics(namespace string, labelsAndValues ...string) *Metrics {
 			Name:      "rerequested_txs",
 			Help:      "Number of times a transaction was requested again after a previous request timed out",
 		}, labels).With(labelsAndValues...),
+
+		MissingTxs: prometheus.NewCounterFrom(stdprometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: MetricsSubsystem,
+			Name:      "missing_txs",
+			Help:      "Number of transactions that were not found in the mempool from the current proposal",
+		}, labels).With(labelsAndValues...),
+
+		RecoveryRate: prometheus.NewHistogramFrom(stdprometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: MetricsSubsystem,
+			Name:      "recovery_rate",
+			Help:      "Percentage of missing transactions that were able to be fetched",
+			Buckets:   stdprometheus.LinearBuckets(0, 0.1, 10),
+		}, labels).With(labelsAndValues...),
+
 		ActiveOutboundConnections: prometheus.NewGaugeFrom(stdprometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: MetricsSubsystem,
@@ -172,6 +201,51 @@ func NopMetrics() *Metrics {
 		AlreadySeenTxs:            discard.NewCounter(),
 		RequestedTxs:              discard.NewCounter(),
 		RerequestedTxs:            discard.NewCounter(),
+		MissingTxs:                discard.NewCounter(),
+		RecoveryRate:              discard.NewHistogram(),
 		ActiveOutboundConnections: discard.NewGauge(),
 	}
+}
+
+type JSONMetrics struct {
+	dir      string
+	interval int
+	sync.Mutex
+	StartTime           time.Time
+	EndTime             time.Time
+	Blocks              uint64
+	Transactions        []uint64
+	TransactionsMissing []uint64
+	// measured in ms
+	TimeTakenFetchingTxs []uint64
+}
+
+func NewJSONMetrics(dir string) *JSONMetrics {
+	return &JSONMetrics{
+		dir:                  dir,
+		StartTime:            time.Now().UTC(),
+		Transactions:         make([]uint64, 0),
+		TransactionsMissing:  make([]uint64, 0),
+		TimeTakenFetchingTxs: make([]uint64, 0),
+	}
+}
+
+func (m *JSONMetrics) Save() {
+	m.EndTime = time.Now().UTC()
+	content, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	path := filepath.Join(m.dir, fmt.Sprintf("metrics_%d.json", m.interval))
+	os.MustWriteFile(path, content, 0644)
+	m.StartTime = m.EndTime
+	m.interval++
+	m.reset()
+}
+
+func (m *JSONMetrics) reset() {
+	m.Blocks = 0
+	m.Transactions = make([]uint64, 0)
+	m.TransactionsMissing = make([]uint64, 0)
+	m.TimeTakenFetchingTxs = make([]uint64, 0)
 }
