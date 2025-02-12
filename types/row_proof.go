@@ -6,6 +6,7 @@ import (
 
 	"github.com/tendermint/tendermint/crypto/merkle"
 	tmbytes "github.com/tendermint/tendermint/libs/bytes"
+	"github.com/tendermint/tendermint/proto/tendermint/crypto"
 	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 )
 
@@ -82,5 +83,30 @@ func RowProofFromProto(p *tmproto.RowProof) RowProof {
 		Proofs:   rowProofs,
 		StartRow: p.StartRow,
 		EndRow:   p.EndRow,
+	}
+}
+
+// ToProto converts RowProof to its protobuf representation.
+// It converts all the fields to their protobuf counterparts and returns a new RowProof message.
+func (rp RowProof) ToProto() *tmproto.RowProof {
+	if len(rp.RowRoots) == 0 && len(rp.Proofs) == 0 {
+		return &tmproto.RowProof{
+			StartRow: rp.StartRow,
+			EndRow:   rp.EndRow,
+		}
+	}
+
+	rowRoots := make([][]byte, len(rp.RowRoots))
+	proofs := make([]*crypto.Proof, len(rp.Proofs))
+	for i := range rp.Proofs {
+		rowRoots[i] = rp.RowRoots[i].Bytes()
+		proofs[i] = rp.Proofs[i].ToProto()
+	}
+
+	return &tmproto.RowProof{
+		RowRoots: rowRoots,
+		Proofs:   proofs,
+		StartRow: rp.StartRow,
+		EndRow:   rp.EndRow,
 	}
 }
